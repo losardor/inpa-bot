@@ -308,12 +308,27 @@ Body: {}
   `/concorso-public-area/{id}` as a single-concorso lookup route, so a GET
   on `search-better` is parsed as "find concorso with id 'search-better'").
 - An empty JSON body (`{}`) is accepted; that's how we request the
-  unfiltered listing. Filtered queries presumably take filter parameters in
-  the body — out of scope for now.
+  unfiltered listing.
 - Paginated. Default sort is `dataPubblicazione DESC` (newest first).
 - Total population at recon time: ~67k offers across all of history.
 - Pagination via `page` (0-indexed) and `size` query params.
 - Each item carries a stable `id` field; treat that as the primary key.
+
+### Status filter (in the request body)
+
+The body accepts a `status` key restricting results by `calculatedStatus`.
+Quirks:
+
+| Body | Result |
+|---|---|
+| `{}` | All ~67k offers (open + closed + future). |
+| `{"status": ["OPEN"]}` | ~1,884 currently-open offers. |
+| `{"status": ["CLOSED"]}` | ~65,378 closed offers. |
+| `{"status": "OPEN"}` (scalar) | **HTTP 500.** The server crashes on the scalar form. Always send an array. |
+| `{"calculatedStatus": ["OPEN"]}` | Silently ignored — full ~67k returned. The key name is `status`, not `calculatedStatus`, even though the offer field that carries the value is `calculatedStatus`. |
+
+For the digest backfill (Session 5) we use `{"status": ["OPEN"]}` to ingest
+just the currently-relevant subset rather than the full 67k history.
 
 ### New-offer detection strategy
 
