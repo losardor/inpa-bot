@@ -77,7 +77,7 @@ async def poll_once(telegram_bot: Bot) -> None:
         logger.info("Poll cycle: fetched=0 new=0 notifications=0")
         return
 
-    users = await asyncio.to_thread(db.get_all_users)
+    users = await asyncio.to_thread(db.get_users_for_notification)
 
     new_count = 0
     notif_count = 0

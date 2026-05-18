@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS users (
     telegram_id INTEGER PRIMARY KEY,
     name        TEXT    NOT NULL,
     filters     TEXT    NOT NULL,
+    status      TEXT    NOT NULL DEFAULT 'active',
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -123,11 +124,17 @@ def init_db(db_path: str | None = None) -> sqlite3.Connection:
 
 def _migrate_schema(conn: sqlite3.Connection) -> None:
     """Apply additive schema changes for databases that pre-date them."""
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(seen_offers)")}
-    if "source" not in columns:
+    seen_cols = {row["name"] for row in conn.execute("PRAGMA table_info(seen_offers)")}
+    if "source" not in seen_cols:
         logger.info("Migrating seen_offers: adding 'source' column")
         conn.execute(
             "ALTER TABLE seen_offers ADD COLUMN source TEXT NOT NULL DEFAULT 'notification'"
+        )
+    user_cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+    if "status" not in user_cols:
+        logger.info("Migrating users: adding 'status' column (existing rows → 'active')")
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"
         )
 
 
@@ -160,33 +167,75 @@ def save_offer(offer: dict) -> None:
         _conn().execute(sql, values)
 
 
+def _row_to_user(row: sqlite3.Row) -> dict:
+    return {
+        "telegram_id": row["telegram_id"],
+        "name": row["name"],
+        "filters": json.loads(row["filters"]),
+        "status": row["status"] if "status" in row.keys() else "active",
+    }
+
+
 def get_all_users() -> list[dict]:
-    """Return every user with `filters` decoded from JSON."""
+    """Return every user (active + pending) with `filters` decoded from JSON."""
     rows = _conn().execute(
-        "SELECT telegram_id, name, filters FROM users ORDER BY telegram_id"
+        "SELECT telegram_id, name, filters, status FROM users ORDER BY telegram_id"
     ).fetchall()
-    return [
-        {
-            "telegram_id": row["telegram_id"],
-            "name": row["name"],
-            "filters": json.loads(row["filters"]),
-        }
-        for row in rows
-    ]
+    return [_row_to_user(row) for row in rows]
 
 
-def upsert_user(telegram_id: int, name: str, filters: dict[str, Any]) -> None:
-    """Create or update a user. `filters` is stored as a JSON string."""
+def get_users_for_notification() -> list[dict]:
+    """Return only users with status='active' — the set eligible for notifications."""
+    rows = _conn().execute(
+        "SELECT telegram_id, name, filters, status FROM users "
+        "WHERE status = 'active' ORDER BY telegram_id"
+    ).fetchall()
+    return [_row_to_user(row) for row in rows]
+
+
+def get_pending_users() -> list[dict]:
+    """Return only users awaiting admin activation."""
+    rows = _conn().execute(
+        "SELECT telegram_id, name, filters, status FROM users "
+        "WHERE status = 'pending' ORDER BY created_at"
+    ).fetchall()
+    return [_row_to_user(row) for row in rows]
+
+
+def upsert_user(
+    telegram_id: int,
+    name: str,
+    filters: dict[str, Any],
+    *,
+    status: str = "active",
+) -> None:
+    """Create or update a user. `filters` is stored as a JSON string.
+
+    `status` defaults to 'active' for backward compatibility with callers that
+    don't know about the column (e.g. older tests or admin enrolment via
+    `upsert_user(..., status='active')`).
+    """
     sql = """
-    INSERT INTO users (telegram_id, name, filters)
-    VALUES (?, ?, ?)
+    INSERT INTO users (telegram_id, name, filters, status)
+    VALUES (?, ?, ?, ?)
     ON CONFLICT(telegram_id) DO UPDATE SET
         name       = excluded.name,
         filters    = excluded.filters,
+        status     = excluded.status,
         updated_at = CURRENT_TIMESTAMP
     """
     with _conn():
-        _conn().execute(sql, (telegram_id, name, json.dumps(filters)))
+        _conn().execute(sql, (telegram_id, name, json.dumps(filters), status))
+
+
+def set_user_status(telegram_id: int, status: str) -> None:
+    """Toggle a user's status without touching name or filters."""
+    with _conn():
+        _conn().execute(
+            "UPDATE users SET status = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE telegram_id = ?",
+            (status, telegram_id),
+        )
 
 
 def mark_seen(offer_id: str, user_telegram_id: int) -> None:

@@ -124,9 +124,9 @@ async def run(dry_run: bool) -> None:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not set (required when --dry-run is off)")
 
     db.init_db()
-    users = db.get_all_users()
+    users = db.get_users_for_notification()
     logger.info(
-        "Backfill starting (dry_run=%s); %d enrolled user(s)", dry_run, len(users)
+        "Backfill starting (dry_run=%s); %d active user(s)", dry_run, len(users)
     )
 
     per_user_matches: dict[int, list[dict]] = defaultdict(list)
