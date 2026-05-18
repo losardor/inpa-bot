@@ -1,7 +1,9 @@
 # INFRASTRUCTURE.md — inpa-bot deployment target
 
 Survey completed 2026-05-18 against `inpa-server` (`root@80.211.24.50`,
-hostname `mordekai`).
+hostname `mordekai`). First production deploy completed the same day —
+see the "Production deployment" section at the bottom for the live
+layout and operational commands.
 
 ---
 
@@ -383,4 +385,84 @@ The `CLAUDE.md` hard constraint (`POLL_INTERVAL_SECONDS >= 900`) is
 sufficient — at 15 min cadence with `size=20`, we hit `search-better`
 ~96 times per day, each request returning ~20 records. Negligible load
 on the portal.
+
+---
+
+## Production deployment
+
+First successful deploy: 2026-05-18. Smoke test passed (Telegram commands
+respond; synthetic notification delivered; subsequent poll cycle ran
+incremental-mode and short-circuited on the known id).
+
+### Server-side layout
+
+| Item | Value |
+|---|---|
+| Service user | `inpa` (UID 1001, GID 1001) — member of `docker` (GID 988) |
+| App directory | `/opt/inpa-bot` (owned by `inpa:inpa`) |
+| `.env` location | `/opt/inpa-bot/.env` (chmod 600, owned by `inpa:inpa`) |
+| Data store | Named Docker volume `inpa-bot_data` (managed by Docker; not bind-mounted from the host) |
+| `/opt/inpa-bot/data` on host | Created during provisioning but currently **unused** — the compose file uses a named volume, not a bind mount. Safe to leave or remove. |
+| Container name | `inpa-bot` |
+| Image tag | `inpa-bot:latest` |
+| Restart policy | `unless-stopped` |
+| Log driver | `json-file`, capped at 10 MB × 3 files per container |
+
+### Operational commands (run as the `inpa` user from `/opt/inpa-bot`)
+
+```bash
+# Standard redeploy (pull + rebuild + restart + show last 50 log lines)
+./deploy/deploy.sh
+
+# Just look at logs
+docker compose logs -f --tail=100
+
+# Restart without rebuilding (e.g. after .env change)
+docker compose up -d
+
+# Stop the bot
+docker compose down
+
+# Enroll or modify a user from inside the container
+docker compose exec inpa-bot python -c "
+from src import db
+db.init_db()
+db.upsert_user(<telegram_id>, '<Name>', {'notifica_tutto': True})
+print(db.get_all_users())
+"
+
+# Open a SQLite shell against the live DB
+docker compose exec inpa-bot python -c "
+import sqlite3
+conn = sqlite3.connect('/app/data/inpa-bot.db')
+conn.row_factory = sqlite3.Row
+for r in conn.execute('SELECT id, codice, titolo FROM offers LIMIT 10'):
+    print(dict(r))
+"
+```
+
+### Operational notes / gotchas
+
+- **`deploy.sh` updates take effect on the *next* run.** If you change
+  `deploy.sh` upstream and `git pull` inside the script picks up the new
+  version, bash is still running the old in-memory copy for the rest of
+  the current run. We hit this once during initial deploy.
+- **First-run httpx ReadTimeout.** On the very first `docker compose up`,
+  the container hit one `httpx.ReadTimeout` against `api.telegram.org`
+  during `Application.initialize()` and exited; the `unless-stopped` policy
+  restarted it cleanly and it has been stable since. Likely a cold-network
+  artifact on a 1 vCPU box. Worth keeping an eye on — if it recurs, bump
+  the PTB httpx pool timeout.
+- **scp as root, then `chown inpa:inpa`** — the SSH config only has a
+  `root@` alias, so the `.env` upload pattern is
+  `scp .env inpa-server:/tmp/inpa-bot.env`, then on the server
+  `mv /tmp/inpa-bot.env /opt/inpa-bot/.env && chown inpa:inpa ... && chmod 600 ...`.
+- **`git clone .` into a non-empty dir.** The provisioning step creates
+  `/opt/inpa-bot/data` *before* the clone, which blocks `git clone . .`.
+  Workaround used: rmdir data, clone, mkdir data. Future provisioning
+  scripts should clone first and create data afterwards.
+- **First-run cold start** intentionally ingests only page 0 of inPA
+  (~20 most recent offers). Users enrolled before the next live poll
+  will not be notified about those 20 unless we add a backfill path —
+  see the Future backlog.
 

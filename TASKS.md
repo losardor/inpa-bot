@@ -157,13 +157,56 @@ template captured in `INFRASTRUCTURE.md` → "inPA portal recon".
   the scraper produces — matcher/notifier are agnostic to the data source.
 - Added `ADMIN_TELEGRAM_ID` to `.env.example` and the CLAUDE.md env table.
 
-## 📋 Backlog — Session 4
+## 🔄 Session 4 — Complete
 
-- [ ] Deploy to server following `INFRASTRUCTURE.md` conventions
-- [ ] Write `deploy/inpa-bot.service` (or Docker equivalent)
-- [ ] Write `deploy/deploy.sh`
-- [ ] Smoke test end-to-end on server
-- [ ] Onboard first test user (one of the friends) and verify notification delivery
+- [x] Deploy to server following `INFRASTRUCTURE.md` conventions
+- [x] Write `deploy/inpa-bot.service` (or Docker equivalent)
+      — Docker equivalent was already in place from Session 1 (Dockerfile +
+      docker-compose.yml). Verified live.
+- [x] Write `deploy/deploy.sh` — already in place; tweaked the path comment
+      and switched the trailing log tail to one-shot so the script returns.
+- [x] Smoke test end-to-end on server
+- [x] Onboard first test user (one of the friends) and verify notification delivery
+
+**Outcome (2026-05-18):** bot live in production at `/opt/inpa-bot` on
+`inpa-server`, running as the `inpa` user (UID 1001) via Docker Compose.
+
+Deployment surfaced one real bug not caught by tests: the Session 1 recon
+documented the inPA search endpoint as GET, but the live API is
+`POST /search-better` with `{}` body — GET returns 400 because the
+`/concorso-public-area/{id}` route interprets `search-better` as a concorso
+id. Fixed in commit `4ca23fb` (one-line scraper change + test mock updates);
+all 47 tests still pass. `INFRASTRUCTURE.md` recon section corrected and
+flagged.
+
+Smoke test results:
+- All four commands (`/start`, `/help`, `/profilo`, `/utenti`) responded as
+  designed in Telegram.
+- Cold-start poll ingested 20 offers from `dataPubblicazione DESC` page 0.
+- Admin user (telegram_id 237844366) enrolled with `notifica_tutto: True`.
+- Synthetic notification dispatched via `docker compose exec` to validate the
+  full notify chain (DB → matcher → notifier → Telegram) without waiting for
+  inPA to publish a new bando; full keyboard + message format verified by the
+  user in Telegram.
+- Next live poll at 12:33:00 confirmed since-id pagination: scraper hit the
+  most recent known id on page 0, returned 0 new offers, 0 notifications —
+  exactly the steady-state behaviour we want.
+- `deploy/deploy.sh` re-tested end-to-end (`git pull` → `docker compose build`
+  → `up -d` → `logs --tail=50`); completes cleanly.
+
+Operational notes (gotchas seen during deploy, captured in
+`INFRASTRUCTURE.md`):
+- `git clone .` failed because `/opt/inpa-bot/data` was pre-created. Future
+  provisioning should clone first, then create `data`.
+- One `httpx.ReadTimeout` against api.telegram.org on the very first start;
+  the `unless-stopped` policy recovered immediately. Watch list item.
+- `deploy.sh` mutates itself in place — the first run pulled the new version
+  but kept executing the old in-memory copy. Re-runs are fine.
+
+Prerequisite from earlier sessions:
+- The dedicated `inpa` service user (Session 4 hard prereq from Session 2)
+  was created during this session via `useradd -m -s /bin/bash inpa &&
+  usermod -aG docker inpa`.
 
 ## 📋 Backlog — Future
 
