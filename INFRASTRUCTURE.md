@@ -279,4 +279,90 @@ If we go this route: `deploy/inpa-bot.service` with
 
 ## inPA portal recon
 
-_Pending — see TASKS.md Session 1 Task 3._
+Findings from 2026-05-18. The public listings on
+`https://www.inpa.gov.it/bandi-e-avvisi/` are rendered client-side by
+calling a JSON API on the `portale.inpa.gov.it` subdomain. No HTML
+scraping is required.
+
+### Base URL
+
+```
+https://portale.inpa.gov.it/concorsi-smart/api/concorso-public-area/
+```
+
+No authentication. Plain HTTPS GET. Returns `application/json`.
+
+### Main listing endpoint
+
+```
+GET /search-better?page=0&size=20
+```
+
+- Paginated. Default sort is `dataPubblicazione DESC` (newest first).
+- Total population at recon time: ~67k offers across all of history.
+- Pagination via `page` (0-indexed) and `size` query params.
+- Each item carries a stable `id` field; treat that as the primary key.
+
+### New-offer detection strategy
+
+The scheduler should:
+
+1. Fetch `page=0` on each poll.
+2. For each offer in the response, check if its `id` is already in the
+   local `offers` table.
+3. **Stop paginating as soon as a known `id` is encountered** — everything
+   beyond that is older and already seen.
+4. On the very first run (empty DB), the bot operator decides how far
+   back to seed. For MVP we only ingest page 0 on cold start, so users
+   only get notifications for genuinely new offers going forward
+   (we do not flood them with the whole 67k backlog).
+
+### Fields to store per offer
+
+From each item in the `search-better` response:
+
+| Field | Notes |
+|---|---|
+| `id` | Stable primary key. |
+| `codice` | Human-readable concorso code (e.g. ministry-specific). |
+| `titolo` | Title. |
+| `figuraRicercata` | Role/profile sought. |
+| `descrizioneBreve` | Short description. |
+| `entiRiferimento` | Array — join into a single string for storage. |
+| `sedi` | Array (work locations) — join. |
+| `categorie` | Array — join. |
+| `settori` | Array — join. |
+| `tipoProcedura` | Procedure type. |
+| `calculatedStatus` | Computed status (open/closed/etc.). |
+| `dataPubblicazione` | Publication date. |
+| `dataScadenza` | Deadline. |
+| `numPosti` | Number of positions. |
+| `salaryMin` | Nullable. |
+| `salaryMax` | Nullable. |
+| `linkReindirizzamento` | External link, if any. |
+| `allegatoMediaId` | Attachment media id (PDF). |
+
+### Detail page URL (for inline-keyboard buttons)
+
+```
+https://www.inpa.gov.it/bandi-e-avvisi/dettaglio-bando-avviso/?concorso_id=<id>
+```
+
+### Reference / lookup endpoints
+
+These are slow-changing taxonomies. Fetch once, cache in the DB, refresh
+occasionally (e.g. weekly):
+
+| Endpoint | Returns |
+|---|---|
+| `/get-categorie` | List of categorie. |
+| `/get-settori` | List of settori. |
+| `/find-all` | List of regions. |
+
+### Politeness
+
+The `CLAUDE.md` hard constraint (`POLL_INTERVAL_SECONDS >= 900`) is
+sufficient — at 15 min cadence with `size=20`, we hit `search-better`
+~96 times per day, each request returning ~20 records. Negligible load
+on the portal.
+

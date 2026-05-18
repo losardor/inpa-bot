@@ -72,20 +72,28 @@ and updated CLAUDE.md + README.md to match. See commit
 ### 3. inPA portal recon
 Do this locally (not on the server). Goal: understand how to reliably get listing data.
 
-- [ ] Open `https://www.inpa.gov.it/bandi-e-avvisi/` in Chrome DevTools → Network tab
-- [ ] Filter for XHR/Fetch requests and note every API call made on page load and
+- [x] Open `https://www.inpa.gov.it/bandi-e-avvisi/` in Chrome DevTools → Network tab
+- [x] Filter for XHR/Fetch requests and note every API call made on page load and
       on pagination/filter interactions
-- [ ] Check whether responses are JSON (preferred) or HTML
-- [ ] If JSON API found: document base URL, query parameters, pagination pattern,
+- [x] Check whether responses are JSON (preferred) or HTML
+- [x] If JSON API found: document base URL, query parameters, pagination pattern,
       and a sample response structure in `INFRASTRUCTURE.md` under an "inPA API" section
-- [ ] If HTML only: identify the CSS selectors or DOM structure needed to extract:
+- [x] If HTML only: identify the CSS selectors or DOM structure needed to extract:
       title, ente, category, region, deadline, URL/concorso_id
-- [ ] Check `portale.inpa.gov.it/api/` — we have evidence this subdomain serves data
+- [x] Check `portale.inpa.gov.it/api/` — we have evidence this subdomain serves data
       directly (PDFs, structured content); probe whether a listing endpoint exists there
-- [ ] Check for a `robots.txt` at `www.inpa.gov.it/robots.txt`
-- [ ] Note rate limiting behaviour if any (response headers, HTTP 429s)
-- [ ] Commit findings as a section in `INFRASTRUCTURE.md`:
+- [x] Check for a `robots.txt` at `www.inpa.gov.it/robots.txt`
+- [x] Note rate limiting behaviour if any (response headers, HTTP 429s)
+- [x] Commit findings as a section in `INFRASTRUCTURE.md`:
       `docs: add inPA API recon findings`
+
+**Outcome (2026-05-18):** No HTML scraping needed. The listings page is rendered
+client-side by `https://portale.inpa.gov.it/concorsi-smart/api/concorso-public-area/`,
+which exposes a public JSON `search-better` endpoint (paginated by `page`/`size`,
+sorted by `dataPubblicazione DESC`) plus reference endpoints
+(`/get-categorie`, `/get-settori`, `/find-all`). Detection strategy: fetch
+page 0, stop paginating on first known `id`. Full field list and detail URL
+template captured in `INFRASTRUCTURE.md` → "inPA portal recon".
 
 ---
 
