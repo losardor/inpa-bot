@@ -37,6 +37,12 @@ from src import db, matcher, scraper
 logger = logging.getLogger("inpa-backfill")
 
 DIGEST_MAX_ITEMS = 20
+# Telegram messages are capped at 4096 chars. We leave headroom for the
+# header and a potential footer; lines beyond this budget overflow into
+# the "+ N altri" tail instead of blowing the send.
+DIGEST_TEXT_BUDGET = 3700
+DIGEST_TITOLO_MAX = 100
+DIGEST_ENTE_MAX = 50
 
 
 def _configure_logging() -> None:
@@ -58,25 +64,36 @@ def _format_date_ddmmyyyy(raw: object) -> str:
     return text
 
 
+def _truncate(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
 def _build_digest(matches: list[dict]) -> str:
     total = len(matches)
     header = (
         "📋 <b>Offerte aperte che corrispondono al tuo profilo</b>\n"
         f"Trovate {total} offerte attualmente aperte. Ecco le più recenti:\n\n"
     )
-    lines = []
+    lines: list[str] = []
     for index, offer in enumerate(matches[:DIGEST_MAX_ITEMS], start=1):
-        titolo = html.escape(str(offer.get("titolo") or "—"))
-        ente = html.escape(str(offer.get("entiRiferimento") or "—"))
+        titolo = html.escape(_truncate(str(offer.get("titolo") or "—"), DIGEST_TITOLO_MAX))
+        ente = html.escape(_truncate(str(offer.get("entiRiferimento") or "—"), DIGEST_ENTE_MAX))
         scadenza = html.escape(_format_date_ddmmyyyy(offer.get("dataScadenza")))
         url = scraper.detail_url(offer["id"])
-        lines.append(
-            f"{index}. <a href=\"{url}\">{titolo}</a> — {ente} — Scadenza {scadenza}"
-        )
+        line = f"{index}. <a href=\"{url}\">{titolo}</a> — {ente} — Scadenza {scadenza}"
+        # Stop accumulating if the next line would push us over Telegram's 4096-char
+        # ceiling. The excess matches roll into the "+ N altri" footer.
+        candidate_body = "\n".join(lines + [line])
+        if len(header) + len(candidate_body) > DIGEST_TEXT_BUDGET:
+            break
+        lines.append(line)
+    shown = len(lines)
     body = "\n".join(lines)
     footer = ""
-    if total > DIGEST_MAX_ITEMS:
-        remaining = total - DIGEST_MAX_ITEMS
+    if total > shown:
+        remaining = total - shown
         footer = (
             f"\n\n+ {remaining} altri risultati. "
             "Usa /offerte per vedere le tue opportunità."
