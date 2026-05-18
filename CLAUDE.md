@@ -14,10 +14,12 @@ profile with filters (keywords, region, category, contract type). The bot only
 notifies a user when a new offer matches their profile. Inline keyboard buttons
 allow quick access to further details or the full listing.
 
-The bot runs as a background service on a remote Linux server that already hosts
-other Telegram bots. Consistency with the existing infrastructure on that server
-is a hard requirement — always check `INFRASTRUCTURE.md` (populated after the
-server survey in session 1) before making architectural decisions.
+The bot runs as a Docker container on a remote Linux server (Ubuntu 24.04,
+1 vCPU, 1 GB RAM). The server was freshly provisioned for this project: no
+other bots run on it yet, but Docker + the Compose plugin are already
+installed. `inpa-bot` sets the deployment pattern that any future bot on the
+box will inherit. Always check `INFRASTRUCTURE.md` for the up-to-date picture
+of the server before making architectural decisions.
 
 ---
 
@@ -44,12 +46,13 @@ inpa-bot/
 ├── .gitignore
 ├── CLAUDE.md             # this file
 ├── TASKS.md              # session todo list — update before finishing any session
-├── INFRASTRUCTURE.md     # populated after server survey (session 1)
+├── INFRASTRUCTURE.md     # server survey + runtime decisions
 ├── README.md
 ├── requirements.txt
+├── Dockerfile            # python:3.12-slim base; runs `python -m src.scheduler`
+├── docker-compose.yml    # one service, named volume for the SQLite DB, log rotation
 ├── deploy/
-│   ├── inpa-bot.service  # systemd unit file (or Docker equivalent — TBD after survey)
-│   └── deploy.sh         # pull + restart script for the server
+│   └── deploy.sh         # wraps `git pull && docker compose build && up -d`
 ├── src/
 │   ├── scraper.py        # fetches and parses inPA listings
 │   ├── db.py             # SQLite interface, offer deduplication
@@ -64,19 +67,19 @@ inpa-bot/
     └── test_db.py
 ```
 
-> ⚠️ The `deploy/` layout and runtime method (systemd vs Docker) must match the
-> existing server infrastructure. Do not finalise these files until `INFRASTRUCTURE.md`
-> is written.
-
 ---
 
 ## Environment and setup
+
+**Local development on the Mac uses a Python virtualenv.** Production on the
+server uses Docker (see *Deployment* below) — do not mix the two. The venv is
+for running tests, iterating on parsing/matching logic, and ad-hoc scripts.
 
 ```bash
 # clone and enter the repo
 git clone <repo-url> && cd inpa-bot
 
-# create and activate a virtual environment
+# create and activate a virtual environment (local dev only)
 python3 -m venv .venv
 source .venv/bin/activate
 
@@ -86,6 +89,9 @@ pip install -r requirements.txt
 # configure secrets
 cp .env.example .env
 # then edit .env with real values
+
+# run the test suite
+pytest -v
 ```
 
 Required environment variables (document all of these in `.env.example`):
@@ -142,23 +148,49 @@ Required environment variables (document all of these in `.env.example`):
 
 ## Deployment
 
-> Finalise this section after the server survey. The steps below are the intended
-> pattern — adapt to match existing infrastructure found on the server.
+Production runs on `inpa-server` (SSH alias in `~/.ssh/config`) as a single
+Docker Compose service.
+
+**Base image:** `python:3.12-slim`. Chosen deliberately to keep the image
+small — the server has only 1 GB of RAM and a 20 GB disk, and the Docker
+daemon already uses ~100 MB at idle. Do not switch to a fatter base
+(`python:3.12`, `ubuntu`, distroless variants with extra tooling) without
+revisiting the resource budget in `INFRASTRUCTURE.md`.
+
+**Before the first deploy (one-time setup on the server):**
+
+1. Create a dedicated unprivileged user for the bot (e.g. `inpa`) and add
+   it to the `docker` group. The bot should not run from `root`'s home.
+   This is captured as a Session 4 prerequisite in `TASKS.md`.
+2. Clone the repo into `~/bots/inpa-bot` for that user.
+3. Copy `.env.example` to `.env` and fill in real values. `chmod 600 .env`.
+
+**Each deploy:**
 
 ```bash
 # on your local machine
 ssh inpa-server
 
-# on the server
+# on the server, as the inpa user
 cd ~/bots/inpa-bot
-git pull origin main
-source .venv/bin/activate
-pip install -r requirements.txt   # only if requirements.txt changed
-sudo systemctl restart inpa-bot
-journalctl -u inpa-bot -f         # tail logs to confirm clean start
+./deploy/deploy.sh
 ```
 
-Or simply run `deploy/deploy.sh` if it has been set up.
+`deploy/deploy.sh` wraps the standard sequence:
+
+```bash
+git pull --ff-only origin main
+docker compose build
+docker compose up -d
+docker compose logs -f --tail=50    # tail logs to confirm clean start
+```
+
+The SQLite database lives in a named Docker volume (`data`), so
+`docker compose down` is safe and `docker compose up -d` resumes with the
+same data. To inspect the DB, `docker compose exec inpa-bot sqlite3
+/app/data/inpa-bot.db` (the `sqlite3` CLI inside the slim image needs to be
+installed via the Dockerfile if we want this — currently the host has no
+`sqlite3` either).
 
 ---
 
@@ -174,6 +206,8 @@ Or simply run `deploy/deploy.sh` if it has been set up.
 - **Fail loudly, not silently.** If the scraper fails or the inPA response changes
   structure, log an error and alert (a simple Telegram message to an admin chat ID
   is fine). Do not swallow exceptions.
-- **Consistency with existing bots.** Before introducing a new dependency, deployment
-  pattern, or runtime choice, check `INFRASTRUCTURE.md` to see if there is already
-  a precedent on the server.
+- **Respect the server's resource budget.** 1 vCPU / 961 MiB RAM / 20 GB disk.
+  Before adding a heavy dependency, a second long-running process, or a fatter
+  base image, check `INFRASTRUCTURE.md` and confirm the choice still fits. Log
+  output is capped to ~30 MB per container via `docker-compose.yml` — do not
+  remove those limits.

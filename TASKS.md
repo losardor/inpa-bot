@@ -50,14 +50,22 @@ ufw default-deny inbound (only port 22 open), Europe/Rome TZ. See
 ### 2. Repo scaffold
 Once the survey is done and `INFRASTRUCTURE.md` exists:
 
-- [ ] Initialise Git repo, create `.gitignore` (Python template + `.env` + `*.db`)
-- [ ] Create the directory structure from `CLAUDE.md`
-- [ ] Write `.env.example` with all required variables documented
-- [ ] Write a minimal `README.md` (what the project is, how to run it locally)
-- [ ] Write `requirements.txt` with initial dependencies:
+- [x] Initialise Git repo, create `.gitignore` (Python template + `.env` + `*.db`)
+- [x] Create the directory structure from `CLAUDE.md`
+- [x] Write `.env.example` with all required variables documented
+- [x] Write a minimal `README.md` (what the project is, how to run it locally)
+- [x] Write `requirements.txt` with initial dependencies:
       `python-telegram-bot`, `requests`, `beautifulsoup4`, `python-dotenv`, `pytest`
       (adjust based on what the survey reveals about existing bot dependencies)
-- [ ] Commit: `chore: initial repo scaffold`
+- [x] Commit: `chore: initial repo scaffold`
+
+**Outcome (2026-05-18):** Initial scaffold landed in commit `5b5809c`. After the
+server survey, switched the deployment target from systemd to Docker Compose:
+added `Dockerfile` (python:3.12-slim, non-root user, tini init), `docker-compose.yml`
+(named volume for SQLite data, log size capped), `.dockerignore`, rewrote
+`deploy/deploy.sh` as a Compose wrapper, removed `deploy/inpa-bot.service`,
+and updated CLAUDE.md + README.md to match. See commit
+`chore: switch to Docker, update CLAUDE.md and scaffold deploy files`.
 
 ---
 
