@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS seen_offers (
     offer_id         TEXT    NOT NULL,
     user_telegram_id INTEGER NOT NULL,
     notified_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    source           TEXT    NOT NULL DEFAULT 'notification',
     PRIMARY KEY (offer_id, user_telegram_id),
     FOREIGN KEY (offer_id)         REFERENCES offers(id),
     FOREIGN KEY (user_telegram_id) REFERENCES users(telegram_id)
@@ -110,9 +111,24 @@ def init_db(db_path: str | None = None) -> sqlite3.Connection:
     _connection = sqlite3.connect(path, check_same_thread=False)
     _connection.row_factory = sqlite3.Row
     _connection.execute("PRAGMA foreign_keys = ON")
+    # WAL allows the scheduler and a parallel backfill/admin process to read+write
+    # the same DB file concurrently (the scheduler keeps a long-lived connection).
+    if path != ":memory:":
+        _connection.execute("PRAGMA journal_mode = WAL")
     _connection.executescript(_SCHEMA)
+    _migrate_schema(_connection)
     _connection.commit()
     return _connection
+
+
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    """Apply additive schema changes for databases that pre-date them."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(seen_offers)")}
+    if "source" not in columns:
+        logger.info("Migrating seen_offers: adding 'source' column")
+        conn.execute(
+            "ALTER TABLE seen_offers ADD COLUMN source TEXT NOT NULL DEFAULT 'notification'"
+        )
 
 
 def close_db() -> None:
@@ -174,10 +190,27 @@ def upsert_user(telegram_id: int, name: str, filters: dict[str, Any]) -> None:
 
 
 def mark_seen(offer_id: str, user_telegram_id: int) -> None:
-    """Record that we have notified this user about this offer. Idempotent."""
+    """Record that we notified this user about this offer (source='notification')."""
     with _conn():
         _conn().execute(
-            "INSERT OR IGNORE INTO seen_offers (offer_id, user_telegram_id) VALUES (?, ?)",
+            "INSERT OR IGNORE INTO seen_offers "
+            "(offer_id, user_telegram_id, source) VALUES (?, ?, 'notification')",
+            (str(offer_id), user_telegram_id),
+        )
+
+
+def mark_seen_without_notify(offer_id: str, user_telegram_id: int) -> None:
+    """Record an (offer, user) pair without having actually sent a notification.
+
+    Used by the backfill flow: offers already open when a user is enrolled should
+    not generate per-offer notifications (the user gets a digest instead), but we
+    still want a row so any future replay/audit logic can tell backfill-seen rows
+    apart from notification-seen rows (`source='backfill'`).
+    """
+    with _conn():
+        _conn().execute(
+            "INSERT OR IGNORE INTO seen_offers "
+            "(offer_id, user_telegram_id, source) VALUES (?, ?, 'backfill')",
             (str(offer_id), user_telegram_id),
         )
 

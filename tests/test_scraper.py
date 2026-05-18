@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 import requests
 import responses
@@ -202,3 +204,62 @@ def test_detail_url_builds_concorso_link():
         "https://www.inpa.gov.it/bandi-e-avvisi/dettaglio-bando-avviso/"
         "?concorso_id=42"
     )
+
+
+@responses.activate
+def test_fetch_all_open_offers_sends_status_open_body():
+    responses.add(responses.POST, SEARCH_URL, json=_page([_make_offer("1")]), status=200)
+    responses.add(responses.POST, SEARCH_URL, json=_page([]), status=200)
+
+    list(scraper.fetch_all_open_offers())
+
+    body = json.loads(responses.calls[0].request.body)
+    assert body == {"status": ["OPEN"]}
+
+
+@responses.activate
+def test_fetch_all_open_offers_paginates_three_pages():
+    page_0 = _page([_make_offer("a"), _make_offer("b")])
+    page_1 = _page([_make_offer("c"), _make_offer("d")])
+    page_2 = _page([_make_offer("e")])
+    page_3 = _page([])  # terminator
+    for body in (page_0, page_1, page_2, page_3):
+        responses.add(responses.POST, SEARCH_URL, json=body, status=200)
+
+    result = list(scraper.fetch_all_open_offers())
+
+    assert [o["id"] for o in result] == ["a", "b", "c", "d", "e"]
+    assert len(responses.calls) == 4
+    assert "page=0" in responses.calls[0].request.url
+    assert "page=1" in responses.calls[1].request.url
+    assert "page=2" in responses.calls[2].request.url
+    assert "page=3" in responses.calls[3].request.url
+
+
+@responses.activate
+def test_fetch_all_open_offers_respects_max_pages_cap():
+    # Same non-empty page repeatedly — would loop forever without the cap.
+    page = _page([_make_offer("x")])
+    for _ in range(10):
+        responses.add(responses.POST, SEARCH_URL, json=page, status=200)
+
+    result = list(scraper.fetch_all_open_offers(max_pages=3))
+
+    assert len(responses.calls) == 3
+    assert len(result) == 3  # 1 offer per page × 3 pages
+
+
+@responses.activate
+def test_fetch_all_open_offers_stops_on_empty_page():
+    page_0 = _page([_make_offer("a")])
+    page_1_empty = _page([])
+    # Add extra pages that should NEVER be hit.
+    extra = _page([_make_offer("should-not-appear")])
+    responses.add(responses.POST, SEARCH_URL, json=page_0, status=200)
+    responses.add(responses.POST, SEARCH_URL, json=page_1_empty, status=200)
+    responses.add(responses.POST, SEARCH_URL, json=extra, status=200)
+
+    result = list(scraper.fetch_all_open_offers())
+
+    assert [o["id"] for o in result] == ["a"]
+    assert len(responses.calls) == 2  # stopped after the empty page

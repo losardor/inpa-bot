@@ -8,7 +8,7 @@ API on the `portale.inpa.gov.it` subdomain. See INFRASTRUCTURE.md →
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Iterator
 
 import requests
 
@@ -199,6 +199,46 @@ def fetch_new_offers(
         max_pages, since_id,
     )
     return collected
+
+
+def fetch_all_open_offers(
+    max_pages: int = 200,
+    page_size: int = DEFAULT_PAGE_SIZE,
+) -> Iterator[dict]:
+    """Yield every currently-open inPA offer, newest first.
+
+    Uses the `{"status": ["OPEN"]}` body filter (~1.9k offers, vs ~67k unfiltered).
+    Yields one storage-shaped offer dict at a time so memory stays flat even on
+    the 1 GB server. `max_pages` is a safety cap; raise it cautiously.
+    """
+    total_pages: int | None = None
+    yielded = 0
+    for page in range(max_pages):
+        payload = _post(
+            SEARCH_PATH,
+            params={"page": page, "size": page_size},
+            json={"status": ["OPEN"]},
+        )
+        if total_pages is None and isinstance(payload, dict):
+            tp = payload.get("totalPages")
+            if isinstance(tp, int):
+                total_pages = tp
+        items = _items_from_payload(payload)
+        if not items:
+            logger.info("Backfill: empty page %d; stopping after %d offers", page, yielded)
+            return
+        for raw in items:
+            yield _extract_offer(raw)
+            yielded += 1
+        if (page + 1) % 10 == 0:
+            logger.info(
+                "Backfill progress: page %d/%s, %d offers so far",
+                page + 1, total_pages if total_pages is not None else "?", yielded,
+            )
+    logger.warning(
+        "Backfill hit max_pages=%d (yielded %d); raise the cap if the dataset has grown",
+        max_pages, yielded,
+    )
 
 
 def _fetch_reference(path: str) -> list:
