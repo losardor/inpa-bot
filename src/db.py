@@ -1,1 +1,171 @@
-# TODO: implement in session 2
+"""SQLite persistence layer.
+
+Three tables:
+- `offers`     — every offer seen on inPA, keyed by inPA's stable `id`.
+- `users`      — Telegram users we notify, with filter preferences as JSON.
+- `seen_offers`— join table recording which (offer, user) pairs have been notified.
+
+Connection is module-scoped: call `init_db()` once at startup. For tests,
+call `init_db(":memory:")`.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sqlite3
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+OFFER_FIELD_MAP: dict[str, str] = {
+    "id": "id",
+    "codice": "codice",
+    "titolo": "titolo",
+    "figuraRicercata": "figura_ricercata",
+    "descrizioneBreve": "descrizione_breve",
+    "entiRiferimento": "enti_riferimento",
+    "sedi": "sedi",
+    "categorie": "categorie",
+    "settori": "settori",
+    "tipoProcedura": "tipo_procedura",
+    "calculatedStatus": "calculated_status",
+    "dataPubblicazione": "data_pubblicazione",
+    "dataScadenza": "data_scadenza",
+    "numPosti": "num_posti",
+    "salaryMin": "salary_min",
+    "salaryMax": "salary_max",
+    "linkReindirizzamento": "link_reindirizzamento",
+    "allegatoMediaId": "allegato_media_id",
+}
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS offers (
+    id                    TEXT PRIMARY KEY,
+    codice                TEXT,
+    titolo                TEXT,
+    figura_ricercata      TEXT,
+    descrizione_breve     TEXT,
+    enti_riferimento      TEXT,
+    sedi                  TEXT,
+    categorie             TEXT,
+    settori               TEXT,
+    tipo_procedura        TEXT,
+    calculated_status     TEXT,
+    data_pubblicazione    TEXT,
+    data_scadenza         TEXT,
+    num_posti             INTEGER,
+    salary_min            INTEGER,
+    salary_max            INTEGER,
+    link_reindirizzamento TEXT,
+    allegato_media_id     TEXT,
+    saved_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    telegram_id INTEGER PRIMARY KEY,
+    name        TEXT    NOT NULL,
+    filters     TEXT    NOT NULL,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS seen_offers (
+    offer_id         TEXT    NOT NULL,
+    user_telegram_id INTEGER NOT NULL,
+    notified_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (offer_id, user_telegram_id),
+    FOREIGN KEY (offer_id)         REFERENCES offers(id),
+    FOREIGN KEY (user_telegram_id) REFERENCES users(telegram_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_offers_data_pubblicazione
+    ON offers (data_pubblicazione DESC);
+"""
+
+_connection: sqlite3.Connection | None = None
+
+
+def _conn() -> sqlite3.Connection:
+    if _connection is None:
+        raise RuntimeError("Database not initialised. Call init_db() first.")
+    return _connection
+
+
+def init_db(db_path: str | None = None) -> sqlite3.Connection:
+    """Open the SQLite connection and create the schema.
+
+    `db_path` overrides the `DB_PATH` env var (useful for tests).
+    """
+    global _connection
+
+    path = db_path if db_path is not None else os.environ.get("DB_PATH")
+    if not path:
+        raise RuntimeError("DB_PATH not set and no path passed to init_db()")
+
+    logger.info("Opening SQLite database at %s", path)
+    _connection = sqlite3.connect(path, check_same_thread=False)
+    _connection.row_factory = sqlite3.Row
+    _connection.execute("PRAGMA foreign_keys = ON")
+    _connection.executescript(_SCHEMA)
+    _connection.commit()
+    return _connection
+
+
+def close_db() -> None:
+    """Close the connection. Primarily for tests; in production the process lives forever."""
+    global _connection
+    if _connection is not None:
+        _connection.close()
+        _connection = None
+
+
+def is_new_offer(offer_id: str) -> bool:
+    """Return True if this offer id has never been saved before."""
+    row = _conn().execute(
+        "SELECT 1 FROM offers WHERE id = ? LIMIT 1", (str(offer_id),)
+    ).fetchone()
+    return row is None
+
+
+def save_offer(offer: dict) -> None:
+    """Insert an offer in the scraper's shape (camelCase keys). Idempotent on `id`."""
+    columns = list(OFFER_FIELD_MAP.values())
+    values = [offer.get(api_key) for api_key in OFFER_FIELD_MAP.keys()]
+
+    placeholders = ", ".join("?" for _ in columns)
+    column_list = ", ".join(columns)
+    sql = f"INSERT OR IGNORE INTO offers ({column_list}) VALUES ({placeholders})"
+
+    with _conn():
+        _conn().execute(sql, values)
+
+
+def get_all_users() -> list[dict]:
+    """Return every user with `filters` decoded from JSON."""
+    rows = _conn().execute(
+        "SELECT telegram_id, name, filters FROM users ORDER BY telegram_id"
+    ).fetchall()
+    return [
+        {
+            "telegram_id": row["telegram_id"],
+            "name": row["name"],
+            "filters": json.loads(row["filters"]),
+        }
+        for row in rows
+    ]
+
+
+def upsert_user(telegram_id: int, name: str, filters: dict[str, Any]) -> None:
+    """Create or update a user. `filters` is stored as a JSON string."""
+    sql = """
+    INSERT INTO users (telegram_id, name, filters)
+    VALUES (?, ?, ?)
+    ON CONFLICT(telegram_id) DO UPDATE SET
+        name       = excluded.name,
+        filters    = excluded.filters,
+        updated_at = CURRENT_TIMESTAMP
+    """
+    with _conn():
+        _conn().execute(sql, (telegram_id, name, json.dumps(filters)))

@@ -97,13 +97,31 @@ template captured in `INFRASTRUCTURE.md` → "inPA portal recon".
 
 ---
 
-## 📋 Backlog — Session 2
+## 🔄 Session 2 — Complete
 
-- [ ] Implement `src/scraper.py` based on recon findings
-- [ ] Write `tests/test_scraper.py` with mocked HTTP responses
-- [ ] Implement `src/db.py`: SQLite schema, offer deduplication, user profiles table
-- [ ] Write `tests/test_db.py` using in-memory DB
-- [ ] Run `pytest -v` — all tests must pass before moving on
+- [x] Implement `src/scraper.py` based on recon findings
+- [x] Write `tests/test_scraper.py` with mocked HTTP responses
+- [x] Implement `src/db.py`: SQLite schema, offer deduplication, user profiles table
+- [x] Write `tests/test_db.py` using in-memory DB
+- [x] Run `pytest -v` — all tests must pass before moving on
+
+**Outcome (2026-05-18):** scraper and db modules landed with 22 passing tests.
+- `src/scraper.py`: `requests` client (10 s timeout) against
+  `portale.inpa.gov.it/concorsi-smart/api/concorso-public-area/`. Public
+  surface: `fetch_new_offers(since_id, page_size, max_pages)`,
+  `fetch_categories/sectors/regions`, `detail_url(offer_id)`. Cold start
+  (`since_id is None`) intentionally fetches only page 0 to avoid flooding
+  users with the ~67k historical backlog — call out to revisit if we ever
+  want a backfill mode.
+- `src/db.py`: SQLite with module-scoped connection (`init_db(path=None)`,
+  `close_db()`). Tables: `offers`, `users`, `seen_offers`. Camel→snake field
+  map keeps DB column names Pythonic while still accepting the scraper's
+  raw dicts. `save_offer` uses `INSERT OR IGNORE` for race-safe dedup;
+  `upsert_user` uses `ON CONFLICT DO UPDATE`.
+- Added `pytest.ini` (`pythonpath = .`, `testpaths = tests`) and
+  `src/__init__.py` so `from src import db` works under pytest.
+- Tests use the `responses` library for HTTP mocking and `":memory:"` for
+  the DB, per the testing rules in CLAUDE.md.
 
 ## 📋 Backlog — Session 3
 
