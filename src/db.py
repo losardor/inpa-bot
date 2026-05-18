@@ -40,6 +40,8 @@ OFFER_FIELD_MAP: dict[str, str] = {
     "allegatoMediaId": "allegato_media_id",
 }
 
+_REVERSE_OFFER_FIELD_MAP: dict[str, str] = {db: api for api, db in OFFER_FIELD_MAP.items()}
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS offers (
     id                    TEXT PRIMARY KEY,
@@ -169,3 +171,35 @@ def upsert_user(telegram_id: int, name: str, filters: dict[str, Any]) -> None:
     """
     with _conn():
         _conn().execute(sql, (telegram_id, name, json.dumps(filters)))
+
+
+def mark_seen(offer_id: str, user_telegram_id: int) -> None:
+    """Record that we have notified this user about this offer. Idempotent."""
+    with _conn():
+        _conn().execute(
+            "INSERT OR IGNORE INTO seen_offers (offer_id, user_telegram_id) VALUES (?, ?)",
+            (str(offer_id), user_telegram_id),
+        )
+
+
+def _row_to_offer(row: sqlite3.Row) -> dict:
+    """Convert a row from the `offers` table back into the camelCase shape
+    produced by the scraper (so matcher/notifier can consume it uniformly)."""
+    return {api_key: row[db_col] for db_col, api_key in _REVERSE_OFFER_FIELD_MAP.items()}
+
+
+def get_recent_offers(limit: int = 50) -> list[dict]:
+    """Return the most recent offers (camelCase shape), newest first."""
+    rows = _conn().execute(
+        "SELECT * FROM offers ORDER BY data_pubblicazione DESC, saved_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [_row_to_offer(row) for row in rows]
+
+
+def get_latest_offer_id() -> str | None:
+    """Return the most-recent offer id known to the DB, or None if empty."""
+    row = _conn().execute(
+        "SELECT id FROM offers ORDER BY data_pubblicazione DESC, saved_at DESC LIMIT 1"
+    ).fetchone()
+    return row["id"] if row else None

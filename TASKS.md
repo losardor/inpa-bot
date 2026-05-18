@@ -123,13 +123,39 @@ template captured in `INFRASTRUCTURE.md` → "inPA portal recon".
 - Tests use the `responses` library for HTTP mocking and `":memory:"` for
   the DB, per the testing rules in CLAUDE.md.
 
-## 📋 Backlog — Session 3
+## 🔄 Session 3 — Complete
 
-- [ ] Implement `src/matcher.py`: filter offers against user profiles
-- [ ] Write `tests/test_matcher.py`
-- [ ] Implement `src/notifier.py`: Telegram message formatting, inline keyboard buttons
-- [ ] Implement `src/bot.py`: `/start`, `/profile`, `/offers`, `/help` command handlers
-- [ ] Implement `src/scheduler.py`: polling loop wiring everything together
+- [x] Implement `src/matcher.py`: filter offers against user profiles
+- [x] Write `tests/test_matcher.py`
+- [x] Implement `src/notifier.py`: Telegram message formatting, inline keyboard buttons
+- [x] Implement `src/bot.py`: `/start`, `/profilo`, `/offerte`, `/help` command handlers
+      (commands ended up in Italian to match the bot's user-facing language;
+      added admin-only `/utenti`)
+- [x] Implement `src/scheduler.py`: polling loop wiring everything together
+
+**Outcome (2026-05-18):** end-to-end flow in place; 47 tests pass.
+- `src/matcher.py`: pure-function `get_matching_users(offer, users)`. Within a
+  filter dimension values OR; across dimensions AND; `notifica_tutto` bypasses.
+  Keyword matching is case-insensitive substring across
+  `titolo + figuraRicercata + descrizioneBreve`. Region filter targets `sedi`
+  (the closest offer field we have).
+- `src/notifier.py`: async `notify_user(bot, telegram_id, offer)` with HTML
+  message body and a two-button inline keyboard (the second button only when
+  `allegatoMediaId` is present). `TelegramError` is logged, never raised.
+- `src/bot.py`: PTB v22 async handlers for /start, /profilo, /offerte, /help,
+  and admin-only /utenti gated by `ADMIN_TELEGRAM_ID`. Profile creation is
+  out-of-band; users without a profile see their `telegram_id` so they can
+  ask the admin to enrol them.
+- `src/scheduler.py`: `python -m src.scheduler` entry point. Loads .env,
+  configures logging to stdout, opens the DB, builds the bot Application,
+  starts the updater, then runs `poll_loop` every `POLL_INTERVAL_SECONDS`
+  (enforced minimum 900). Each cycle: `fetch_new_offers(since_id) → save_offer →
+  matcher.get_matching_users → notifier.notify_user → db.mark_seen`. Logs a
+  one-line summary per cycle. Blocking I/O goes through `asyncio.to_thread`.
+- `src/db.py` extended with `mark_seen`, `get_recent_offers`, `get_latest_offer_id`,
+  and a reverse field map so DB rows are returned in the same camelCase shape
+  the scraper produces — matcher/notifier are agnostic to the data source.
+- Added `ADMIN_TELEGRAM_ID` to `.env.example` and the CLAUDE.md env table.
 
 ## 📋 Backlog — Session 4
 

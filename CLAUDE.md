@@ -33,8 +33,9 @@ Scheduler (poll every 30 min)
                             └── Notifier  →  sends Telegram messages with inline buttons
 ```
 
-Telegram command handlers (`/start`, `/profile`, `/offers`, `/help`) run in a
-separate async loop alongside the scheduler.
+Telegram command handlers (`/start`, `/profilo`, `/offerte`, `/help`, plus
+the admin-only `/utenti`) run in a separate async loop alongside the
+scheduler.
 
 ---
 
@@ -102,6 +103,7 @@ Required environment variables (document all of these in `.env.example`):
 | `POLL_INTERVAL_SECONDS` | How often to check inPA (minimum 900 = 15 min) |
 | `DB_PATH` | Path to the SQLite database file |
 | `LOG_LEVEL` | `INFO` in production, `DEBUG` in development |
+| `ADMIN_TELEGRAM_ID` | Numeric Telegram id allowed to run admin commands (e.g. `/utenti`); empty disables them |
 
 ---
 

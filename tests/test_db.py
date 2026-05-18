@@ -103,3 +103,72 @@ def test_filters_roundtrip_as_json(db):
 
     users = db.get_all_users()
     assert users[0]["filters"] == complex_filters
+
+
+def test_get_latest_offer_id_empty_db(db):
+    assert db.get_latest_offer_id() is None
+
+
+def test_get_latest_offer_id_returns_most_recent_pub_date(db, offer_factory):
+    db.save_offer(offer_factory("old", dataPubblicazione="2026-01-01"))
+    db.save_offer(offer_factory("middle", dataPubblicazione="2026-03-01"))
+    db.save_offer(offer_factory("newest", dataPubblicazione="2026-05-01"))
+
+    assert db.get_latest_offer_id() == "newest"
+
+
+def test_get_recent_offers_returns_camel_case_shape(db, offer_factory):
+    db.save_offer(offer_factory("42", figuraRicercata="Ingegnere"))
+
+    offers = db.get_recent_offers()
+
+    assert len(offers) == 1
+    offer = offers[0]
+    assert offer["id"] == "42"
+    assert offer["figuraRicercata"] == "Ingegnere"
+    assert offer["dataPubblicazione"] == "2026-05-18"
+    # Snake case keys should NOT leak through.
+    assert "figura_ricercata" not in offer
+
+
+def test_get_recent_offers_ordered_by_pub_date_desc(db, offer_factory):
+    db.save_offer(offer_factory("a", dataPubblicazione="2026-01-01"))
+    db.save_offer(offer_factory("c", dataPubblicazione="2026-05-01"))
+    db.save_offer(offer_factory("b", dataPubblicazione="2026-03-01"))
+
+    ids = [o["id"] for o in db.get_recent_offers()]
+    assert ids == ["c", "b", "a"]
+
+
+def test_get_recent_offers_respects_limit(db, offer_factory):
+    for i in range(10):
+        db.save_offer(offer_factory(str(i), dataPubblicazione=f"2026-05-{i + 1:02d}"))
+    assert len(db.get_recent_offers(limit=3)) == 3
+
+
+def test_mark_seen_is_idempotent(db, offer_factory):
+    db.save_offer(offer_factory("42"))
+    db.upsert_user(1, "Alice", {})
+
+    db.mark_seen("42", 1)
+    db.mark_seen("42", 1)  # second call must not error
+
+    rows = db._conn().execute(
+        "SELECT COUNT(*) AS n FROM seen_offers WHERE offer_id = ? AND user_telegram_id = ?",
+        ("42", 1),
+    ).fetchone()
+    assert rows["n"] == 1
+
+
+def test_mark_seen_distinct_pairs(db, offer_factory):
+    db.save_offer(offer_factory("42"))
+    db.save_offer(offer_factory("43"))
+    db.upsert_user(1, "Alice", {})
+    db.upsert_user(2, "Bob", {})
+
+    db.mark_seen("42", 1)
+    db.mark_seen("42", 2)
+    db.mark_seen("43", 1)
+
+    row = db._conn().execute("SELECT COUNT(*) AS n FROM seen_offers").fetchone()
+    assert row["n"] == 3
