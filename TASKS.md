@@ -208,6 +208,52 @@ Prerequisite from earlier sessions:
   was created during this session via `useradd -m -s /bin/bash inpa &&
   usermod -aG docker inpa`.
 
+## 🔄 Session 5 — Complete (backfill digest)
+
+- [x] Backfill: digest-style enrollment for new users so they aren't flooded
+      with 1.9k notifications, but still get a one-time look at currently-open
+      offers that match their profile.
+
+**Outcome (2026-05-18):** Shipped via PR
+[#1](https://github.com/losardor/inpa-bot/pull/1) (merge commit `c694bc4`).
+63 tests pass (5 new for the digest builder + 4 for `fetch_all_open_offers` +
+6 for the `source` column and migration).
+
+What landed:
+- `scraper.fetch_all_open_offers()` — memory-flat iterator that POSTs
+  `{"status": ["OPEN"]}` to `search-better` and paginates ~95 pages
+  (~1.9k open offers). Progress log every 10 pages. `max_pages=200`
+  safety cap.
+- `src/backfill.py` — standalone `python -m src.backfill [--dry-run]`.
+  For each enrolled user: compute matches, send a single HTML digest
+  (capped at 20 items; budget-aware so the message stays under
+  Telegram's 4096-char limit; truncates long titles/ente with `…`).
+  Records every fetched offer in `seen_offers` with `source='backfill'`
+  for every enrolled user.
+- `db.mark_seen_without_notify` + a new `source` column on `seen_offers`
+  with online ALTER-TABLE migration for the legacy production DB.
+- WAL journal mode in `init_db` so a `docker compose exec` backfill
+  can read/write the same DB file alongside the running scheduler
+  without lock contention.
+
+Real outcomes from running on prod:
+- Admin (notifica_tutto): 1885/1885 matches → digest with 20 shown + "+ 1865 altri".
+- Lauriane (Lazio AND 3 categorie AND 11 keywords): 36/1885 matches → digest with
+  20 shown + "+ 16 altri".
+- 3,770 (offer × user) pairs recorded as `source='backfill'`.
+- Scheduler continued polling normally throughout and after the backfill
+  (steady-state `Hit known offer id ... on page 0; fetched=0 new=0`).
+
+Bug surfaced and fixed mid-deploy (commit `364c332`): the spec's 20-item
+cap wasn't enough — inPA URLs (~95 chars) plus 300-char Italian titles
+blew past Telegram's 4096-char message limit. Added title/ente truncation
++ a 3700-char running budget; excess matches now roll into the `+N altri`
+footer rather than failing the send.
+
+Workflow validated: branch `feat/backfill-digest` → PR → server deploy
+from branch for testing → fix-and-redeploy on the branch → merge → server
+back on `main`.
+
 ## 📋 Backlog — Future
 
 - [ ] Admin Telegram command to check bot health / last successful poll
@@ -217,6 +263,8 @@ Prerequisite from earlier sessions:
 - [ ] Find the correct URL paths for the reference taxonomies
       (`fetch_categories/sectors/regions`) — the current `/concorso-public-area/`
       paths return 400. Then wire a periodic refresh job to cache them in the DB.
+- [ ] Auto-trigger backfill on new user enrolment instead of running it
+      manually (currently `docker compose exec inpa-bot python -m src.backfill`).
 
 ---
 
