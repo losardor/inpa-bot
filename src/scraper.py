@@ -104,20 +104,43 @@ def _extract_offer(item: dict) -> dict:
     return out
 
 
-def _get(path: str, params: dict | None = None, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> Any:
+def _request(
+    method: str,
+    path: str,
+    *,
+    params: dict | None = None,
+    json: Any = None,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> Any:
     url = BASE_URL + path
     try:
-        response = requests.get(url, params=params, timeout=timeout)
+        response = requests.request(method, url, params=params, json=json, timeout=timeout)
     except requests.RequestException as exc:
-        logger.error("inPA request failed: %s params=%s — %s", url, params, exc)
+        logger.error(
+            "inPA request failed: %s %s params=%s — %s", method, url, params, exc
+        )
         raise
     if response.status_code != 200:
         logger.error(
-            "inPA returned non-200: %s params=%s -> %s body=%r",
-            url, params, response.status_code, response.text[:200],
+            "inPA returned non-200: %s %s params=%s -> %s body=%r",
+            method, url, params, response.status_code, response.text[:200],
         )
         response.raise_for_status()
     return response.json()
+
+
+def _get(path: str, params: dict | None = None, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> Any:
+    return _request("GET", path, params=params, timeout=timeout)
+
+
+def _post(
+    path: str,
+    params: dict | None = None,
+    *,
+    json: Any = None,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> Any:
+    return _request("POST", path, params=params, json=json, timeout=timeout)
 
 
 def _items_from_payload(payload: Any) -> list[dict]:
@@ -149,7 +172,7 @@ def fetch_new_offers(
     collected: list[dict] = []
 
     if since_id is None:
-        payload = _get(SEARCH_PATH, params={"page": 0, "size": page_size})
+        payload = _post(SEARCH_PATH, params={"page": 0, "size": page_size}, json={})
         items = _items_from_payload(payload)
         for raw in items:
             collected.append(_extract_offer(raw))
@@ -157,7 +180,7 @@ def fetch_new_offers(
         return collected
 
     for page in range(max_pages):
-        payload = _get(SEARCH_PATH, params={"page": page, "size": page_size})
+        payload = _post(SEARCH_PATH, params={"page": page, "size": page_size}, json={})
         items = _items_from_payload(payload)
         if not items:
             logger.info("Empty page %d; stopping pagination", page)

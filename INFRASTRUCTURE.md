@@ -295,9 +295,19 @@ No authentication. Plain HTTPS GET. Returns `application/json`.
 ### Main listing endpoint
 
 ```
-GET /search-better?page=0&size=20
+POST /search-better?page=0&size=20
+Content-Type: application/json
+Body: {}
 ```
 
+- **Verb is POST**, not GET. The Session 1 recon misrecorded this; live
+  deployment in Session 4 surfaced the bug (GET returns HTTP 400 with
+  `cs.app.ex.general.competition_not_found` because the API treats
+  `/concorso-public-area/{id}` as a single-concorso lookup route, so a GET
+  on `search-better` is parsed as "find concorso with id 'search-better'").
+- An empty JSON body (`{}`) is accepted; that's how we request the
+  unfiltered listing. Filtered queries presumably take filter parameters in
+  the body — out of scope for now.
 - Paginated. Default sort is `dataPubblicazione DESC` (newest first).
 - Total population at recon time: ~67k offers across all of history.
 - Pagination via `page` (0-indexed) and `size` query params.
@@ -358,6 +368,14 @@ occasionally (e.g. weekly):
 | `/get-categorie` | List of categorie. |
 | `/get-settori` | List of settori. |
 | `/find-all` | List of regions. |
+
+> ⚠️ **Untested against live API.** Session 4 probing showed all three paths
+> return HTTP 400 under `/concorso-public-area/` (same single-concorso route
+> collision as `search-better`) and HTTP 405 for POST. The verb is correct
+> (GET) but the URL paths are almost certainly wrong — these endpoints
+> likely live under a different controller base path. The bot does not call
+> these functions today (only `fetch_new_offers` runs in the poll loop), so
+> this is a follow-up — see the "Future" backlog in `TASKS.md`.
 
 ### Politeness
 

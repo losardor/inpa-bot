@@ -171,6 +171,9 @@ template captured in `INFRASTRUCTURE.md` → "inPA portal recon".
 - [ ] Error alerting: Telegram message to admin chat on scraper failure
 - [ ] Add more filter dimensions to user profiles (salary range, contract type)
 - [ ] Consider persisting raw offer JSON for debugging past notifications
+- [ ] Find the correct URL paths for the reference taxonomies
+      (`fetch_categories/sectors/regions`) — the current `/concorso-public-area/`
+      paths return 400. Then wire a periodic refresh job to cache them in the DB.
 
 ---
 

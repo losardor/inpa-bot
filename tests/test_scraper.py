@@ -43,7 +43,7 @@ def _page(offers: list[dict]) -> dict:
 @responses.activate
 def test_extract_offer_joins_arrays_and_preserves_scalars():
     responses.add(
-        responses.GET,
+        responses.POST,
         SEARCH_URL,
         json=_page([_make_offer("42")]),
         status=200,
@@ -73,7 +73,7 @@ def test_extract_offer_joins_arrays_and_preserves_scalars():
 def test_cold_start_fetches_only_page_zero():
     """When since_id is None, scraper must stop after page 0 even if more pages exist."""
     responses.add(
-        responses.GET,
+        responses.POST,
         SEARCH_URL,
         json=_page([_make_offer("100"), _make_offer("99")]),
         status=200,
@@ -91,7 +91,7 @@ def test_cold_start_fetches_only_page_zero():
 def test_pagination_stops_on_known_id_mid_page():
     """When a known id appears in the middle of a page, return only offers above it."""
     page_0 = _page([_make_offer("50"), _make_offer("49"), _make_offer("KNOWN")])
-    responses.add(responses.GET, SEARCH_URL, json=page_0, status=200)
+    responses.add(responses.POST, SEARCH_URL, json=page_0, status=200)
 
     result = scraper.fetch_new_offers(since_id="KNOWN")
 
@@ -106,9 +106,9 @@ def test_pagination_crosses_pages_until_known_id():
     page_0 = _page([_make_offer("50"), _make_offer("49")])
     page_1 = _page([_make_offer("48"), _make_offer("KNOWN"), _make_offer("46")])
 
-    # responses matches by URL prefix; the two GET stubs are served in order.
-    responses.add(responses.GET, SEARCH_URL, json=page_0, status=200)
-    responses.add(responses.GET, SEARCH_URL, json=page_1, status=200)
+    # responses matches by URL; the two POST stubs are served in order.
+    responses.add(responses.POST, SEARCH_URL, json=page_0, status=200)
+    responses.add(responses.POST, SEARCH_URL, json=page_1, status=200)
 
     result = scraper.fetch_new_offers(since_id="KNOWN")
 
@@ -123,8 +123,8 @@ def test_pagination_stops_on_empty_page():
     """If a page comes back empty, scraping ends gracefully without hitting max_pages."""
     page_0 = _page([_make_offer("10"), _make_offer("9")])
     page_1 = _page([])
-    responses.add(responses.GET, SEARCH_URL, json=page_0, status=200)
-    responses.add(responses.GET, SEARCH_URL, json=page_1, status=200)
+    responses.add(responses.POST, SEARCH_URL, json=page_0, status=200)
+    responses.add(responses.POST, SEARCH_URL, json=page_1, status=200)
 
     result = scraper.fetch_new_offers(since_id="NEVER_SEEN")
 
@@ -138,7 +138,7 @@ def test_pagination_respects_max_pages_cap():
     page = _page([_make_offer("a"), _make_offer("b")])
     # Stub the same response repeatedly so the scraper can loop indefinitely if it wanted to.
     for _ in range(10):
-        responses.add(responses.GET, SEARCH_URL, json=page, status=200)
+        responses.add(responses.POST, SEARCH_URL, json=page, status=200)
 
     result = scraper.fetch_new_offers(since_id="NEVER", max_pages=3)
 
@@ -149,7 +149,7 @@ def test_pagination_respects_max_pages_cap():
 
 @responses.activate
 def test_non_200_raises():
-    responses.add(responses.GET, SEARCH_URL, json={"error": "boom"}, status=500)
+    responses.add(responses.POST, SEARCH_URL, json={"error": "boom"}, status=500)
 
     with pytest.raises(requests.HTTPError):
         scraper.fetch_new_offers(since_id=None)
@@ -158,7 +158,7 @@ def test_non_200_raises():
 @responses.activate
 def test_request_exception_propagates():
     responses.add(
-        responses.GET,
+        responses.POST,
         SEARCH_URL,
         body=requests.ConnectionError("connection reset"),
     )
