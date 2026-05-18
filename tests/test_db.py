@@ -172,3 +172,139 @@ def test_mark_seen_distinct_pairs(db, offer_factory):
 
     row = db._conn().execute("SELECT COUNT(*) AS n FROM seen_offers").fetchone()
     assert row["n"] == 3
+
+
+def test_seen_offers_has_source_column(db):
+    columns = {row["name"] for row in db._conn().execute("PRAGMA table_info(seen_offers)")}
+    assert "source" in columns
+
+
+def test_mark_seen_writes_source_notification(db, offer_factory):
+    db.save_offer(offer_factory("42"))
+    db.upsert_user(1, "Alice", {})
+
+    db.mark_seen("42", 1)
+
+    row = db._conn().execute(
+        "SELECT source FROM seen_offers WHERE offer_id = ? AND user_telegram_id = ?",
+        ("42", 1),
+    ).fetchone()
+    assert row["source"] == "notification"
+
+
+def test_mark_seen_without_notify_writes_source_backfill(db, offer_factory):
+    db.save_offer(offer_factory("42"))
+    db.upsert_user(1, "Alice", {})
+
+    db.mark_seen_without_notify("42", 1)
+
+    row = db._conn().execute(
+        "SELECT source FROM seen_offers WHERE offer_id = ? AND user_telegram_id = ?",
+        ("42", 1),
+    ).fetchone()
+    assert row["source"] == "backfill"
+
+
+def test_mark_seen_without_notify_does_not_affect_is_new_offer(db, offer_factory):
+    """is_new_offer cares about the offers table, not seen_offers."""
+    db.save_offer(offer_factory("42"))
+    db.upsert_user(1, "Alice", {})
+
+    db.mark_seen_without_notify("42", 1)
+
+    # The offer is in the offers table → is_new_offer is False regardless of seen_offers.
+    assert db.is_new_offer("42") is False
+    # A different id is still considered new.
+    assert db.is_new_offer("99") is True
+
+
+def test_mark_seen_without_notify_is_idempotent(db, offer_factory):
+    db.save_offer(offer_factory("42"))
+    db.upsert_user(1, "Alice", {})
+
+    db.mark_seen_without_notify("42", 1)
+    db.mark_seen_without_notify("42", 1)
+
+    row = db._conn().execute(
+        "SELECT COUNT(*) AS n FROM seen_offers WHERE offer_id = ? AND user_telegram_id = ?",
+        ("42", 1),
+    ).fetchone()
+    assert row["n"] == 1
+
+
+def test_mark_seen_and_mark_seen_without_notify_use_distinct_sources(db, offer_factory):
+    """First-writer wins (INSERT OR IGNORE) — the source is whichever was written first."""
+    db.save_offer(offer_factory("42"))
+    db.save_offer(offer_factory("43"))
+    db.upsert_user(1, "Alice", {})
+
+    db.mark_seen("42", 1)
+    db.mark_seen_without_notify("43", 1)
+
+    rows = db._conn().execute(
+        "SELECT offer_id, source FROM seen_offers ORDER BY offer_id"
+    ).fetchall()
+    assert [(r["offer_id"], r["source"]) for r in rows] == [
+        ("42", "notification"),
+        ("43", "backfill"),
+    ]
+
+
+def test_schema_migration_adds_source_column_to_legacy_db(tmp_path):
+    """Simulate a production DB created before the `source` column existed.
+
+    The legacy schema is identical to the current one except `seen_offers`
+    lacks `source`. `init_db()` must detect that and ALTER TABLE to add it.
+    """
+    import sqlite3
+
+    db_file = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db_file)
+    conn.executescript(
+        """
+        CREATE TABLE offers (
+            id TEXT PRIMARY KEY,
+            codice TEXT, titolo TEXT, figura_ricercata TEXT,
+            descrizione_breve TEXT, enti_riferimento TEXT, sedi TEXT,
+            categorie TEXT, settori TEXT, tipo_procedura TEXT,
+            calculated_status TEXT, data_pubblicazione TEXT, data_scadenza TEXT,
+            num_posti INTEGER, salary_min INTEGER, salary_max INTEGER,
+            link_reindirizzamento TEXT, allegato_media_id TEXT,
+            saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE users (
+            telegram_id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL, filters TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE seen_offers (
+            offer_id TEXT NOT NULL,
+            user_telegram_id INTEGER NOT NULL,
+            notified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (offer_id, user_telegram_id)
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    db_module.close_db()
+    db_module.init_db(str(db_file))
+    try:
+        columns = {
+            row["name"]
+            for row in db_module._conn().execute("PRAGMA table_info(seen_offers)")
+        }
+        assert "source" in columns
+
+        # Migration must be idempotent: re-opening shouldn't fail or duplicate columns.
+        db_module.close_db()
+        db_module.init_db(str(db_file))
+        columns_again = {
+            row["name"]
+            for row in db_module._conn().execute("PRAGMA table_info(seen_offers)")
+        }
+        assert columns_again == columns
+    finally:
+        db_module.close_db()
