@@ -1,1 +1,282 @@
-# INFRASTRUCTURE.md — populate after server survey (Session 1 Task 1)
+# INFRASTRUCTURE.md — inpa-bot deployment target
+
+Survey completed 2026-05-18 against `inpa-server` (`root@80.211.24.50`,
+hostname `mordekai`).
+
+---
+
+## ⚠️ Headline findings — read before any design decision
+
+1. **The server is freshly provisioned. There are no existing Telegram bots.**
+   `CLAUDE.md` assumed we would be matching established patterns on the box;
+   we are not. There is no precedent for directory layout, runtime manager,
+   dependency tooling, log location, or secrets handling. **We are setting
+   the pattern, not following one.** Any choice we make here will become the
+   convention if/when other bots land on this server.
+2. **Docker (with the Compose plugin) is already installed and running.**
+   No images, no containers. Choosing Docker for `inpa-bot` is a zero-cost
+   path; choosing systemd means apt-installing `python3-venv` and `python3-pip`
+   first.
+3. **Tiny box: 1 vCPU, 961 MiB RAM, 20 GB root disk (15 GB free).**
+   Keep dependencies lean. Avoid frameworks that load a lot at import.
+4. **Only port 22 is open inbound (ufw).** Fine for a polling bot;
+   would need a firewall rule change for a Telegram webhook setup.
+5. **Only `root` has working SSH access.** There is an `ubuntu` user but no
+   shell history and no keys provisioned for it. For a long-running service
+   we should create a dedicated unprivileged user (e.g. `inpa`) and run the
+   bot as that user — flag for Session 4.
+6. **No Python package manager installed at all** (no `pip`, `pip3`, `pipx`,
+   `poetry`, `pipenv`, `uv`). The system has only `/usr/bin/python3.12`.
+   Docker sidesteps this entirely; native venv path requires
+   `apt install python3-venv python3-pip`.
+7. **No SQLite CLI** (`sqlite3` not installed). The Python `sqlite3` stdlib
+   module still works, so the bot itself is fine, but apt-install `sqlite3`
+   on the server for ad-hoc DB inspection.
+
+---
+
+## Host
+
+| Field | Value |
+|---|---|
+| Hostname | `mordekai` |
+| Public IP | `80.211.24.50` |
+| SSH alias | `inpa-server` (in `~/.ssh/config`) |
+| SSH user | `root` (key: `~/.ssh/id_ed25519`) |
+| OS | Ubuntu 24.04.2 LTS (Noble Numbat) |
+| Kernel | `6.8.0-59-generic` (PREEMPT_DYNAMIC, x86_64) |
+| Virtualisation | KVM/QEMU guest (qemu-guest-agent running, open-vm-tools present) |
+| Timezone | `Europe/Rome` (CEST / UTC+2). NTP active, clock synced. |
+| Uptime at survey | ~6 minutes — recently rebooted |
+
+### Hardware
+
+| Resource | Capacity |
+|---|---|
+| CPU | 1 × Intel Core (Broadwell, IBRS) |
+| RAM | 961 MiB total, ~280 MiB free, ~620 MiB available at idle |
+| Swap | 511 MiB (unused) |
+| `/` (lv-root) | 20 GB, 3.9 GB used, 15 GB free (22 %) |
+| `/boot` (sda2) | 488 MB, 41 % used |
+
+---
+
+## Users and access
+
+- `root` — only account with SSH key authorized. Login from `193.206.238.5`
+  observed today.
+- `ubuntu` — exists in `/home/ubuntu`, sudo group, but `.ssh/` is empty and
+  `.bash_history` is empty. Effectively unused.
+- `wtmp` starts 2026-05-18 12:20 → server has essentially no historical
+  login data; confirms recent provisioning.
+
+**Recommendation**: create a dedicated `inpa` (or reuse `ubuntu`) system
+user before deploying. Do not run the bot as root.
+
+---
+
+## Existing services
+
+`systemctl list-units --type=service --state=running` returns 21 units,
+**all of them OS or platform services**. No custom services. Specifically:
+
+| Custom-relevant | Status |
+|---|---|
+| `docker.service` | active (running) |
+| `containerd.service` | active (running) |
+| `fail2ban.service` | active (running, sshd jail only) |
+| `cron.service` | active (running) — no user crontabs |
+| `rsyslog.service` | active (running) |
+| `ssh.service` | active (running) |
+| `qemu-guest-agent.service` | active (running) |
+| `unattended-upgrades.service` | active (running) |
+
+No `*.service` units under `/etc/systemd/system/` related to bots, scrapers,
+or Python workloads.
+
+---
+
+## Container runtime
+
+Docker is fully installed and running, but unused:
+
+```
+$ docker ps -a       # empty
+$ docker images      # empty
+$ docker compose ls --all   # empty
+```
+
+Packages: `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`,
+`docker-compose-plugin` (all apt-managed via the Docker upstream repo).
+
+---
+
+## Python toolchain
+
+| Tool | Path / version |
+|---|---|
+| `python3` | `/usr/bin/python3` → 3.12.3 |
+| `python3.12` | `/usr/bin/python3.12` (same) |
+| `pip` / `pip3` | **not installed** |
+| `pipx` | **not installed** |
+| `poetry` | **not installed** |
+| `pipenv` | **not installed** |
+| `uv` | **not installed** |
+| `python3-venv` apt package | **not installed** |
+
+No virtualenvs anywhere under `/root`, `/home`, `/opt`, `/srv`.
+No `requirements.txt`, `pyproject.toml`, or `Pipfile` anywhere on disk.
+
+---
+
+## Bot / application directories
+
+Searched `/home`, `/root`, `/opt`, `/srv` (and a `find` for `*bot*` /
+`*telegram*` directories under the first 4 levels of `/`):
+
+- `/home/ubuntu` — empty except dotfiles.
+- `/root` — only `.bashrc`, `.profile`, `.cache`, `.config`, `.ssh`, `.viminfo`.
+- `/opt` — only `containerd/`.
+- `/srv` — empty.
+
+No precedent for `~/bots/<name>` or `/opt/<name>` layout. We pick one.
+The `CLAUDE.md` template assumes `~/bots/inpa-bot`; that is fine to establish
+as the convention.
+
+---
+
+## Data stores
+
+| Tool | Installed? |
+|---|---|
+| `sqlite3` CLI | **no** |
+| `psql` (Postgres client) | **no** |
+| `redis-cli` | **no** |
+
+No Postgres or Redis server running. No shared DB instance.
+SQLite via Python stdlib is the right choice for `inpa-bot`; the
+`sqlite3` apt package is worth installing on the server for inspection.
+
+---
+
+## Networking & firewall
+
+- `ufw` is **active**, default-deny incoming, allow outgoing.
+- Only allowed rule: `22/tcp (OpenSSH)` from anywhere (v4 and v6).
+- Listening ports (`ss -tlnp`):
+  - `:22` — sshd
+  - `127.0.0.53:53`, `127.0.0.54:53` — systemd-resolved (localhost only)
+- No nginx / caddy / apache / haproxy installed.
+- `fail2ban` jails: `sshd` only.
+
+For a Telegram bot using **long polling** (the default for
+`python-telegram-bot`), no inbound port is needed — outbound HTTPS to
+`api.telegram.org` and `www.inpa.gov.it` works through the
+default-allow-outgoing policy. If we ever switch to webhooks, we'd need to
+open a port and set up TLS termination.
+
+---
+
+## Cron and scheduled jobs
+
+- `crontab -l` (root): **no crontab**
+- `/var/spool/cron/crontabs/` is empty (no per-user crontabs).
+- `/etc/cron.d/`: only stock entries (`e2scrub_all`, `sysstat`).
+- `/etc/cron.daily/`: stock only (`apport`, `apt-compat`, `dpkg`,
+  `logrotate`, `man-db`, `sysstat`).
+- `/etc/cron.hourly/`: empty (only `.placeholder`).
+
+No relevant pre-existing scheduling we need to coordinate with.
+
+---
+
+## Logging
+
+- `rsyslog` is running, default config.
+- `journalctl` is the system log query path (systemd-journald active).
+- `/etc/logrotate.d/` contains only OS-level configs (apt, fail2ban,
+  rsyslog, ufw, etc.) — no per-application configs.
+- No bot-specific `/var/log/<bot>/` directories exist.
+
+**Choice to make for inpa-bot**: log to stdout and let systemd-journald or
+Docker capture it (preferred — zero config, queryable via `journalctl -u
+inpa-bot` or `docker logs`). Avoid writing to flat files unless we have a
+specific reason — there's no rotation set up for application logs.
+
+---
+
+## Secrets management
+
+Nothing in place. No shared `.env` directory, no Vault, no
+`/etc/<bot>/<bot>.env` convention.
+
+**Choice to make**: either `EnvironmentFile=/etc/inpa-bot/inpa-bot.env`
+in a systemd unit, or a Docker Compose `env_file:` reference. Either way,
+keep the file out of `/root/` and chmod 0600 owned by the service user.
+
+---
+
+## Installed dev tooling
+
+| Tool | Present |
+|---|---|
+| `git` | yes (`/usr/bin/git`) |
+| `curl`, `wget` | yes |
+| `tmux`, `screen` | yes |
+| `htop`, `byobu` | yes (apt-manual) |
+| `make` | **no** |
+| `gcc` | **no** |
+| `build-essential` | **no** |
+
+Pure-Python dependencies will install fine; anything with a C extension
+that lacks a wheel for cp312/manylinux will fail without
+`apt install build-essential`. Pin dependencies to wheel-available
+versions or use Docker.
+
+---
+
+## Implications for inpa-bot design
+
+### Runtime: Docker Compose, recommended
+
+Pros: Docker is already there. Python interpreter and all build tooling
+isolated in the image. No need to apt-install `python3-venv`, `pip`,
+`build-essential` on the host. Easy to redeploy (`docker compose pull &&
+docker compose up -d`). Logs via `docker logs` / journald.
+
+Cons: 1 GB RAM box — Docker daemon already uses ~100 MB. Tolerable but tight.
+
+If we go this route: `deploy/docker-compose.yml` + a slim `Dockerfile`
+(e.g. `python:3.12-slim`), and a one-line `deploy/deploy.sh`.
+
+### Runtime: systemd, alternative
+
+Pros: lighter on RAM. More direct journald integration. Matches the
+`CLAUDE.md` template (`deploy/inpa-bot.service`).
+
+Cons: must apt-install `python3-venv python3-pip` first (and possibly
+`build-essential` and `sqlite3`). Per-bot venvs become our problem to
+maintain.
+
+If we go this route: `deploy/inpa-bot.service` with
+`ExecStart=/home/inpa/inpa-bot/.venv/bin/python -m src.scheduler`,
+`User=inpa`, `EnvironmentFile=/etc/inpa-bot/inpa-bot.env`,
+`Restart=on-failure`.
+
+### Other decisions baked in by the survey
+
+- **Log to stdout**, capture via journald or `docker logs`. Don't write
+  files.
+- **SQLite file location**: `/var/lib/inpa-bot/inpa-bot.db` (FHS-correct)
+  or `~/inpa-bot/data/inpa-bot.db` if we go the per-user-dir route.
+  Pick one when scaffolding `deploy/`.
+- **Dedicated service user** (`inpa` or `ubuntu`). Not root.
+- **Outbound only**; no firewall changes needed.
+- **`sqlite3` apt package** should be installed on the server for
+  ad-hoc DB inspection (does not affect the running bot).
+
+---
+
+## inPA portal recon
+
+_Pending — see TASKS.md Session 1 Task 3._

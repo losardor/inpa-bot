@@ -14,29 +14,36 @@ all subsequent architectural decisions are consistent with what is already there
 Output goes into `INFRASTRUCTURE.md` (create it during this task).
 
 Checklist:
-- [ ] OS, distro, kernel version (`uname -a`, `lsb_release -a`)
-- [ ] Running services: how are the existing bots managed?
+- [x] OS, distro, kernel version (`uname -a`, `lsb_release -a`)
+- [x] Running services: how are the existing bots managed?
       (`systemctl list-units --type=service --state=running`)
-- [ ] Existing bot directories: location, structure, naming conventions
+- [x] Existing bot directories: location, structure, naming conventions
       (likely somewhere under `~`, `/opt`, or `/srv` — explore and note the pattern)
-- [ ] Python setup: system Python version, whether each bot has its own venv
+- [x] Python setup: system Python version, whether each bot has its own venv
       or there is a shared one, where venvs live
-- [ ] Dependency management: are `requirements.txt` files used? `pyproject.toml`?
+- [x] Dependency management: are `requirements.txt` files used? `pyproject.toml`?
       `pipenv`? Note the pattern.
-- [ ] Deployment method: manual `git pull`? A `deploy.sh` script? Makefile target?
+- [x] Deployment method: manual `git pull`? A `deploy.sh` script? Makefile target?
       Anything automated?
-- [ ] Log setup: does each bot write to a file, rely on `journalctl`, or something else?
+- [x] Log setup: does each bot write to a file, rely on `journalctl`, or something else?
       Note log locations and rotation config if present.
-- [ ] Secrets management: `.env` files? Environment variables set in the systemd unit?
+- [x] Secrets management: `.env` files? Environment variables set in the systemd unit?
       A shared secrets directory?
-- [ ] Any shared infrastructure: common SQLite/Postgres instance, shared config,
+- [x] Any shared infrastructure: common SQLite/Postgres instance, shared config,
       shared utilities library, common Telegram bot helper?
-- [ ] Reverse proxy: is nginx/caddy running? (Likely not needed here, but good to know.)
-- [ ] Available disk space and RAM headroom (`df -h`, `free -h`)
-- [ ] Any existing cron jobs relevant to bots (`crontab -l`)
+- [x] Reverse proxy: is nginx/caddy running? (Likely not needed here, but good to know.)
+- [x] Available disk space and RAM headroom (`df -h`, `free -h`)
+- [x] Any existing cron jobs relevant to bots (`crontab -l`)
 
 Write all findings into `INFRASTRUCTURE.md`. Note anything that should influence
 the inpa-bot design and flag it explicitly at the top of that file.
+
+**Outcome (2026-05-18):** Server is freshly provisioned — no existing bots, no
+precedent to match. Docker + Compose already installed; Python 3.12 system
+interpreter but no pip/venv/package managers. 1 vCPU / 961 MiB RAM / 20 GB disk,
+ufw default-deny inbound (only port 22 open), Europe/Rome TZ. See
+`INFRASTRUCTURE.md` for full details and runtime recommendation
+(Docker Compose preferred, systemd documented as alternative).
 
 ---
 
