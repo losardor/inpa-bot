@@ -250,6 +250,110 @@ def test_mark_seen_and_mark_seen_without_notify_use_distinct_sources(db, offer_f
     ]
 
 
+def test_upsert_user_defaults_status_to_active(db):
+    db.upsert_user(1, "Alice", {})
+
+    row = db._conn().execute("SELECT status FROM users WHERE telegram_id = 1").fetchone()
+    assert row["status"] == "active"
+
+
+def test_upsert_user_accepts_status_pending(db):
+    db.upsert_user(1, "Alice", {}, status="pending")
+    users = db.get_all_users()
+    assert users[0]["status"] == "pending"
+
+
+def test_get_users_for_notification_excludes_pending(db):
+    db.upsert_user(1, "Active", {}, status="active")
+    db.upsert_user(2, "Pending", {}, status="pending")
+
+    notif = db.get_users_for_notification()
+    assert [u["telegram_id"] for u in notif] == [1]
+    # But the full list still includes both:
+    assert {u["telegram_id"] for u in db.get_all_users()} == {1, 2}
+
+
+def test_get_pending_users_returns_only_pending(db):
+    db.upsert_user(1, "Active", {}, status="active")
+    db.upsert_user(2, "Pending A", {}, status="pending")
+    db.upsert_user(3, "Pending B", {}, status="pending")
+
+    pending = db.get_pending_users()
+    assert {u["telegram_id"] for u in pending} == {2, 3}
+    for user in pending:
+        assert user["status"] == "pending"
+
+
+def test_set_user_status_toggles_without_touching_filters(db):
+    db.upsert_user(1, "Alice", {"keywords": ["a", "b"]}, status="pending")
+
+    db.set_user_status(1, "active")
+
+    user = db.get_all_users()[0]
+    assert user["status"] == "active"
+    assert user["filters"] == {"keywords": ["a", "b"]}
+    assert user["name"] == "Alice"
+
+
+def test_set_user_status_is_noop_for_unknown_user(db):
+    db.set_user_status(999, "active")  # must not raise
+    assert db.get_all_users() == []
+
+
+def test_users_status_migration_on_legacy_db(tmp_path):
+    """A DB created before the status column should have it added automatically,
+    with existing rows defaulting to 'active'."""
+    import sqlite3
+
+    db_file = tmp_path / "legacy_users.db"
+    conn = sqlite3.connect(db_file)
+    conn.executescript(
+        """
+        CREATE TABLE offers (
+            id TEXT PRIMARY KEY,
+            codice TEXT, titolo TEXT, figura_ricercata TEXT,
+            descrizione_breve TEXT, enti_riferimento TEXT, sedi TEXT,
+            categorie TEXT, settori TEXT, tipo_procedura TEXT,
+            calculated_status TEXT, data_pubblicazione TEXT, data_scadenza TEXT,
+            num_posti INTEGER, salary_min INTEGER, salary_max INTEGER,
+            link_reindirizzamento TEXT, allegato_media_id TEXT,
+            saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE users (
+            telegram_id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL, filters TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE seen_offers (
+            offer_id TEXT NOT NULL,
+            user_telegram_id INTEGER NOT NULL,
+            notified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            source TEXT NOT NULL DEFAULT 'notification',
+            PRIMARY KEY (offer_id, user_telegram_id)
+        );
+        INSERT INTO users (telegram_id, name, filters) VALUES (42, 'Legacy', '{}');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    db_module.close_db()
+    db_module.init_db(str(db_file))
+    try:
+        columns = {
+            row["name"]
+            for row in db_module._conn().execute("PRAGMA table_info(users)")
+        }
+        assert "status" in columns
+        # Legacy row should be 'active' by default.
+        users = db_module.get_all_users()
+        assert users[0]["telegram_id"] == 42
+        assert users[0]["status"] == "active"
+    finally:
+        db_module.close_db()
+
+
 def test_schema_migration_adds_source_column_to_legacy_db(tmp_path):
     """Simulate a production DB created before the `source` column existed.
 
