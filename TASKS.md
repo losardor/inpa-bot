@@ -254,6 +254,49 @@ Workflow validated: branch `feat/backfill-digest` → PR → server deploy
 from branch for testing → fix-and-redeploy on the branch → merge → server
 back on `main`.
 
+## 🔄 Session 6 — Complete (admin enrolment in Telegram)
+
+- [x] In-Telegram admin enrolment replaces the SSH + Python one-liner workflow.
+
+**Outcome (2026-05-19):** Shipped via PR
+[#2](https://github.com/losardor/inpa-bot/pull/2) (merge commit `2c25c08`).
+93 tests pass (23 new for bot handlers + parser + 7 new for the `status`
+column and migration). Live smoke test enrolled a real third user (Riccardo)
+end-to-end via Telegram, with `/start → admin notification → /approva … →
+user activation DM` all confirmed.
+
+What landed:
+- `users.status` column (TEXT NOT NULL DEFAULT 'active') with online migration
+  for the prod DB. Existing Admin + Lauriane rows were migrated to 'active'
+  in place during the deploy (logged: `Migrating users: adding 'status'
+  column (existing rows → 'active')`).
+- `db.get_users_for_notification()` (active only), `get_pending_users()`,
+  `set_user_status()`, and `upsert_user(... status=...)`. Scheduler poll and
+  backfill both switched to `get_users_for_notification` — pending users
+  never receive notifications until approved.
+- New commands:
+  - `/start` from an unknown user → row inserted as `pending`, admin DM'd.
+  - `/approva <id> [keywords=...] [regioni=...] [categorie=...]
+    [settori=...] [tipo_procedura=...] [tutto=si]` — activates pending user.
+  - `/revoca <id>` — flips back to pending, clears filters.
+  - `/utenti` now shows pending vs active counts, lists pending first.
+  - `/profilo` distinguishes pending state from missing profile.
+- Filter-key parser (`bot._parse_approva_command`) handles multi-word values
+  like `categorie=Selezione Professionisti ed Esperti` by splitting on
+  whitespace only when immediately followed by a known `key=` token (regex
+  lookahead). `tutto=si` short-circuits to `{"notifica_tutto": True}`.
+
+Smoke test result on prod (2026-05-19):
+- 3 users active: Admin (notifica_tutto), Lauriane (Lazio + 3 categorie
+  + 11 keywords), Riccardo (concorso + lazio + ricerca keyword).
+- Scheduler kept polling normally throughout the smoke test
+  (`Hit known offer id ... on page 0; fetched=0 new=0`).
+
+Testing approach for handlers: extracted the pure
+`_parse_approva_command` and unit-tested it directly (11 parser cases),
+plus thin handler tests that mock PTB's `Update` and `Context` via
+`unittest.mock.MagicMock` + `AsyncMock`. No actual Telegram calls needed.
+
 ## 📋 Backlog — Future
 
 - [ ] Admin Telegram command to check bot health / last successful poll
@@ -263,8 +306,11 @@ back on `main`.
 - [ ] Find the correct URL paths for the reference taxonomies
       (`fetch_categories/sectors/regions`) — the current `/concorso-public-area/`
       paths return 400. Then wire a periodic refresh job to cache them in the DB.
-- [ ] Auto-trigger backfill on new user enrolment instead of running it
-      manually (currently `docker compose exec inpa-bot python -m src.backfill`).
+- [ ] Auto-trigger backfill on newly-approved users (today the admin still
+      runs `docker compose exec inpa-bot python -m src.backfill` manually
+      after a fresh `/approva` if they want to seed the user with currently-
+      open matches; a hook from `/approva` to the backfill flow would close
+      the loop).
 
 ---
 
