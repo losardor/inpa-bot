@@ -1,0 +1,19 @@
+# systemd *user* unit for inpa-bot on makerfaire-nuc (user makerfaire, linger on).
+# Install: cp deploy/inpa-bot.service ~/.config/systemd/user/
+#          systemctl --user daemon-reload && systemctl --user enable --now inpa-bot
+# Config:  ~/.config/tgbots/inpa-bot.env (mode 600). Logs: journalctl --user -u inpa-bot
+# A crash is reported to Ruggiero through the monitor bot (tgsignal-wrap); a stop is not.
+[Unit]
+Description=inpa-bot (Telegram): inPA job offer notifications
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/bots/inpa-bot
+ExecStart=%h/bots/inpa-bot/.venv/bin/tgsignal-wrap -p inpa -n service --no-record --tail 20 -- %h/bots/inpa-bot/.venv/bin/python -m src.scheduler
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=default.target

@@ -14,7 +14,12 @@ profile with filters (keywords, region, category, contract type). The bot only
 notifies a user when a new offer matches their profile. Inline keyboard buttons
 allow quick access to further details or the full listing.
 
-The bot runs as a Docker container on a remote Linux server (Ubuntu 24.04,
+**Hosting (since 2026-11-27):** the bot runs on makerfaire-nuc as a systemd
+user service on Python 3.12 (uv venv), without Docker. See *Production:
+makerfaire-nuc* in `README.md`. The VPS described below and in
+`INFRASTRUCTURE.md` is gone; do not connect to `80.211.24.50`.
+
+Historical: the bot ran as a Docker container on a remote Linux server (Ubuntu 24.04,
 1 vCPU, 1 GB RAM). The server was freshly provisioned for this project: no
 other bots run on it yet, but Docker + the Compose plugin are already
 installed. `inpa-bot` sets the deployment pattern that any future bot on the
@@ -150,7 +155,10 @@ Required environment variables (document all of these in `.env.example`):
 
 ## Deployment
 
-Production runs on `inpa-server` (SSH alias in `~/.ssh/config`) as a single
+> Superseded: see *Production: makerfaire-nuc* in `README.md`. The section below
+> describes the 2026-05 VPS deployment.
+
+Production ran on `inpa-server` (SSH alias in `~/.ssh/config`) as a single
 Docker Compose service.
 
 **Base image:** `python:3.12-slim`. Chosen deliberately to keep the image

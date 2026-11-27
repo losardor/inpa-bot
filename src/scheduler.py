@@ -18,10 +18,9 @@ import logging
 import os
 import sys
 
-from dotenv import load_dotenv
 from telegram import Bot
 
-from src import bot as bot_module
+from src import runtime, bot as bot_module
 from src import db, matcher, notifier, scraper
 
 logger = logging.getLogger("inpa-bot")
@@ -29,15 +28,6 @@ logger = logging.getLogger("inpa-bot")
 MIN_POLL_SECONDS = 900  # CLAUDE.md hard constraint
 DEFAULT_POLL_SECONDS = 1800
 
-
-def _configure_logging() -> None:
-    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
-    level = getattr(logging, level_name, logging.INFO)
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        stream=sys.stdout,
-    )
 
 
 def _read_poll_interval() -> int:
@@ -112,8 +102,7 @@ async def poll_loop(telegram_bot: Bot, interval: int) -> None:
 
 
 async def main_async() -> None:
-    load_dotenv()
-    _configure_logging()
+    runtime.configure('inpa-bot')
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:

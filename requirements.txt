@@ -4,3 +4,4 @@ beautifulsoup4
 python-dotenv
 pytest
 responses
+tgkit @ git+https://github.com/losardor/tgkit@v0.2.1

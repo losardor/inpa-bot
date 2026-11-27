@@ -14,17 +14,35 @@ cp .env.example .env
 pytest -v
 ```
 
-## Production (server)
+## Production: makerfaire-nuc
 
-Runs as a Docker Compose service on `inpa-server` (Ubuntu 24.04, 1 GB RAM).
-Base image is `python:3.12-slim`. See the *Deployment* section of `CLAUDE.md`
-and `INFRASTRUCTURE.md` for the full picture.
+Runs on **makerfaire-nuc** (Sony CSL Rome LAN, user `makerfaire`) as a systemd user service, in its own venv on uv-managed Python 3.12, without Docker. The 2026 VPS (`inpa-server`) is gone; see the banner in `INFRASTRUCTURE.md`.
+
+| | |
+|---|---|
+| Code | `~/bots/inpa-bot` (clone of `main`; nothing is edited on the NUC) |
+| Venv | `~/bots/inpa-bot/.venv` (Python 3.12, `uv`) |
+| Config | `~/.config/tgbots/inpa-bot.env`, mode 600: `TELEGRAM_BOT_TOKEN`, `ADMIN_TELEGRAM_ID`, `POLL_INTERVAL_SECONDS`, `LOG_LEVEL`, `DB_PATH` |
+| Database | `~/.local/share/tgbots/inpa-bot/inpa-bot.db` |
+| Service | `deploy/inpa-bot.service` → `systemctl --user {status,restart} inpa-bot` |
+| Logs | `journalctl --user -u inpa-bot` (tokens redacted by tgkit) |
+| Alerts | a crash reaches Ruggiero through the monitor bot (`tgsignal-wrap -p inpa`) |
+
+Configuration and logging go through [tgkit](https://github.com/losardor/tgkit) (`src/runtime.py`). Without `~/.config/tgbots/inpa-bot.env`, for example on the Mac, the repo's `.env` is used as before.
+
+Deploy after pushing to `main`:
 
 ```bash
-# on the server, as the `inpa` user
-cd /opt/inpa-bot
-./deploy/deploy.sh
+ssh makerfaire@192.168.0.227 '~/bots/inpa-bot/deploy/deploy-nuc.sh'
 ```
+
+**New install, empty database:** run the seed once before the first start, so offers already on inPA are not sent as new:
+
+```bash
+cd ~/bots/inpa-bot && .venv/bin/python -m src.seed     # --dry-run to count only
+```
+
+The Docker files (`Dockerfile`, `docker-compose.yml`, `deploy/deploy.sh`) are from the VPS deployment and are kept for reference.
 
 ## Admin enrolment (Telegram)
 

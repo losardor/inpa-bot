@@ -6,6 +6,15 @@ outcome or any surprises found.
 
 ---
 
+## ✅ 2026-11-27 — Move to makerfaire-nuc (fresh install)
+
+The VPS is gone (contract ended, IP reassigned); its data was lost. Fresh install on makerfaire-nuc.
+- [x] Mark the VPS as gone in `INFRASTRUCTURE.md`; remove the `inpa-server` alias and known_hosts entries on the Mac.
+- [x] Configuration and logging through tgkit (`src/runtime.py`): `~/.config/tgbots/inpa-bot.env`, token redaction, httpx at WARNING; the repo `.env` is still used for local development.
+- [x] `python -m src.seed`: saves the currently open offers plus page 0, so a fresh DB does not treat the existing listing as new. No Telegram messages.
+- [x] `deploy/inpa-bot.service` (systemd user unit, wrapped in `tgsignal-wrap`) and `deploy/deploy-nuc.sh`.
+- [ ] Users re-enrol: each sends `/start`, Ruggiero approves with `/approva`.
+
 ## 🔄 Session 1 — In progress
 
 ### 1. Server survey
