@@ -28,11 +28,10 @@ import os
 import sys
 from collections import defaultdict
 
-from dotenv import load_dotenv
 from telegram import Bot
 from telegram.error import TelegramError
 
-from src import db, matcher, scraper
+from src import runtime, db, matcher, scraper
 
 logger = logging.getLogger("inpa-backfill")
 
@@ -44,15 +43,6 @@ DIGEST_TEXT_BUDGET = 3700
 DIGEST_TITOLO_MAX = 100
 DIGEST_ENTE_MAX = 50
 
-
-def _configure_logging() -> None:
-    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
-    level = getattr(logging, level_name, logging.INFO)
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        stream=sys.stdout,
-    )
 
 
 def _format_date_ddmmyyyy(raw: object) -> str:
@@ -116,8 +106,7 @@ async def _send_digest(bot: Bot, telegram_id: int, text: str) -> bool:
 
 
 async def run(dry_run: bool) -> None:
-    load_dotenv()
-    _configure_logging()
+    runtime.configure('inpa-backfill')
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token and not dry_run:

@@ -1,5 +1,17 @@
 # INFRASTRUCTURE.md — inpa-bot deployment target
 
+> **⚠️ The VPS described below is gone (recorded 2026-11-27).** The
+> contract for `inpa-server` (`80.211.24.50`, hostname `mordekai`) has
+> ended, and the IP now belongs to someone else. **Do not connect to it.**
+> Its SSH host keys changed on 27 Nov 2026; the `inpa-server` alias and its
+> known_hosts entries have been removed from the Mac. The bot's data on the
+> VPS (the `inpa-bot_data` volume) was lost with it.
+>
+> inpa-bot now runs on **makerfaire-nuc** (Sony CSL Rome LAN) as a systemd
+> user service on Python 3.12, without Docker. See *NUC deployment* in
+> `README.md`. The rest of this file is kept as the historical record of the
+> 2026-05 VPS deployment.
+
 Survey completed 2026-05-18 against `inpa-server` (`root@80.211.24.50`,
 hostname `mordekai`). First production deploy completed the same day —
 see the "Production deployment" section at the bottom for the live
