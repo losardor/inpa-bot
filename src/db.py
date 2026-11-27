@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -279,9 +280,24 @@ def get_recent_offers(limit: int = 50) -> list[dict]:
     return [_row_to_offer(row) for row in rows]
 
 
-def get_latest_offer_id() -> str | None:
-    """Return the most-recent offer id known to the DB, or None if empty."""
+def get_latest_offer_id(now: str | None = None) -> str | None:
+    """Return the id the scheduler stops paginating at, or None if the DB is empty.
+
+    This is the most recently published offer whose publication date is not
+    in the future. inPA lists future-dated offers (status VISIBLE, e.g.
+    published 31 Dec) at the top of page 0. If one of those were the stop id,
+    every poll would stop at position 0 and miss the offers published since,
+    until that date passed. Dates are ISO strings, so they compare as text;
+    `now` is UTC in the same format.
+    """
+    now = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     row = _conn().execute(
-        "SELECT id FROM offers ORDER BY data_pubblicazione DESC, saved_at DESC LIMIT 1"
+        "SELECT id FROM offers WHERE data_pubblicazione IS NOT NULL AND data_pubblicazione <= ? "
+        "ORDER BY data_pubblicazione DESC, saved_at DESC LIMIT 1",
+        (now,),
     ).fetchone()
+    if row is None:  # only future-dated (or undated) offers: keep the old behaviour
+        row = _conn().execute(
+            "SELECT id FROM offers ORDER BY data_pubblicazione DESC, saved_at DESC LIMIT 1"
+        ).fetchone()
     return row["id"] if row else None
