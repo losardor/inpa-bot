@@ -412,3 +412,18 @@ def test_schema_migration_adds_source_column_to_legacy_db(tmp_path):
         assert columns_again == columns
     finally:
         db_module.close_db()
+
+
+def test_get_latest_offer_id_skips_future_dated(db, offer_factory):
+    """A future-dated offer listed at the top of page 0 must not become the stop id."""
+    db.save_offer(offer_factory("today", dataPubblicazione="2026-11-27T09:00:00Z"))
+    db.save_offer(offer_factory("future", dataPubblicazione="2026-12-31T11:00:00Z",
+                                calculatedStatus="VISIBLE"))
+    assert db.get_latest_offer_id(now="2026-11-27T16:00:00Z") == "today"
+    # once the date has passed it is an ordinary offer again
+    assert db.get_latest_offer_id(now="2027-01-01T00:00:00Z") == "future"
+
+
+def test_get_latest_offer_id_only_future_falls_back(db, offer_factory):
+    db.save_offer(offer_factory("future", dataPubblicazione="2026-12-31T11:00:00Z"))
+    assert db.get_latest_offer_id(now="2026-11-27T16:00:00Z") == "future"
